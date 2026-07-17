@@ -1,0 +1,1474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tasklist — shared task lists, instantly</title>
+<meta name="description" content="Create a task list, share the link, coordinate in real time.">
+<meta name="theme-color" content="#5b5bd6">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="tasklist">
+<style>
+:root {
+--bg: #f7f7f8;
+--card: #ffffff;
+--text: #191a1e;
+--muted: #8a8d98;
+--line: #e7e7ea;
+--accent: #5b5bd6;
+--accent-soft: #ececfb;
+--done: #22a06b;
+--danger: #d64545;
+--shadow: 0 1px 2px rgba(20,20,30,.05), 0 8px 24px rgba(20,20,30,.06);
+--stack-shadow: 0 -10px 22px rgba(20,20,30,.13);
+--radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+:root {
+--bg: #101116;
+--card: #1a1b22;
+--text: #ececf1;
+--muted: #7e8090;
+--line: #2a2b34;
+--accent: #8583f0;
+--accent-soft: #26263c;
+--done: #34c98b;
+--danger: #ef6a6a;
+--shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+--stack-shadow: 0 -10px 22px rgba(0,0,0,.5);
+}
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+input, button, select, textarea { touch-action: manipulation; }
+html, body { margin: 0; padding: 0; }
+body {
+background: var(--bg);
+color: var(--text);
+font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+min-height: 100dvh;
+}
+.wrap { max-width: 600px; margin: 0 auto; padding: 14px 16px calc(84px + env(safe-area-inset-bottom)); }
+.newrow { display: flex; justify-content: center; padding: 18px 0 4px; }
+.editable {
+cursor: pointer;
+border-bottom: 1.5px dotted color-mix(in srgb, var(--muted) 65%, transparent);
+padding-bottom: 1px;
+}
+.editable:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.btn {
+flex: none; border: 0; cursor: pointer; font: inherit; font-weight: 600;
+border-radius: 999px; padding: 8px 15px;
+background: var(--accent); color: #fff;
+}
+.btn.ghost { background: var(--accent-soft); color: var(--accent); }
+.btn.danger { background: var(--danger); color: #fff; }
+.btn.subtle { background: var(--card); border: 1px solid var(--line); color: var(--text); }
+.btn:active { transform: scale(.97); }
+.tl {
+background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+box-shadow: var(--stack-shadow); overflow: hidden; position: relative;
+}
+.tl + .tl { margin-top: -16px; }
+.tl.open { box-shadow: var(--stack-shadow), var(--shadow); }
+.tl.open + .tl { margin-top: 10px; }
+.tl.closed .tl-head { padding: 14px 16px; }
+.tl.closed:not(:last-child) .tl-head { padding-bottom: 32px; }
+.tl-head { display: flex; align-items: center; gap: 9px; padding: 12px 14px; cursor: pointer; user-select: none; min-width: 0; }
+.tl-title {
+flex: 1; min-width: 0; font-weight: 750; font-size: 17px; letter-spacing: -.02em;
+white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.todo-chip {
+flex: none; font-size: 12px; font-weight: 700; white-space: nowrap;
+color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 3px 10px;
+}
+.todo-chip.zero { color: var(--done); background: transparent; border: 1px solid var(--line); }
+#activebody { border-top: 1px solid var(--line); }
+.addrow { display: flex; gap: 8px; padding: 6px; border-bottom: 1px solid var(--line); }
+#newtask {
+flex: 1; border: 0; outline: 0; background: transparent; color: var(--text);
+font: inherit; font-size: 17px; padding: 10px 12px; min-width: 0;
+}
+#newtask::placeholder { color: var(--muted); }
+#addbtn { border-radius: 10px; padding: 8px 16px; font-size: 20px; line-height: 1; }
+.list:empty { display: none; }
+.task {
+display: flex; align-items: center; gap: 12px;
+padding: 13px 14px; border-bottom: 1px solid var(--line);
+cursor: pointer; user-select: none;
+animation: pop .18s ease-out;
+}
+.task:last-child { border-bottom: 0; }
+@keyframes pop { from { opacity: 0; transform: translateY(4px); } }
+.check {
+flex: none; width: 26px; height: 26px; border-radius: 50%;
+border: 2px solid var(--line); background: transparent;
+display: flex; align-items: center; justify-content: center;
+font-size: 15px; color: #fff; transition: all .15s;
+}
+.task.mine .check, .task.claimed .check { border-color: var(--accent); }
+.task.done .check { border-color: var(--done); background: var(--done); }
+.title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.task.done .title { color: var(--muted); text-decoration: line-through; }
+.chip {
+flex: none; display: inline-flex; align-items: center; gap: 5px;
+font-size: 12px; font-weight: 600; color: var(--muted);
+background: var(--bg); border: 1px solid var(--line);
+padding: 3px 9px 3px 6px; border-radius: 999px; max-width: 40%;
+}
+.chip .avatar { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.del {
+flex: none; border: 0; background: transparent; color: var(--muted);
+font-size: 17px; cursor: pointer; padding: 4px 6px; border-radius: 8px; opacity: .55;
+}
+.del:hover { color: var(--danger); opacity: 1; }
+.task.grab .check { border-style: dashed; }
+/* task thread */
+.thread { background: var(--bg); border-bottom: 1px solid var(--line); padding: 4px 14px 14px; cursor: default; }
+.entry { display: flex; gap: 8px; margin: 10px 0 0; font-size: 14px; align-items: flex-start; }
+.entry .avatar { width: 16px; height: 16px; border-radius: 50%; flex: none; margin-top: 2px; }
+.entry.sys { color: var(--muted); font-size: 12.5px; align-items: center; }
+.entry.sys .avatar { width: 12px; height: 12px; }
+.entry .who { font-weight: 700; }
+.entry .when { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.bubble { background: var(--card); border: 1px solid var(--line); border-radius: 4px 12px 12px 12px; padding: 7px 11px; overflow-wrap: anywhere; min-width: 0; }
+.bubble .cmt-text { margin-top: 2px; }
+.bubble img { max-width: 100%; max-height: 220px; border-radius: 8px; display: block; margin-top: 6px; }
+.filechip { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--accent); text-decoration: none; background: var(--accent-soft); border-radius: 8px; padding: 5px 10px; }
+.assignbar { margin: 12px 0 2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.assignhint { font-size: 12.5px; color: var(--muted); }
+.cmtrow { display: flex; gap: 6px; margin-top: 12px; align-items: center; }
+.cmtrow input[type=text] { flex: 1; font: inherit; font-size: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 13px; outline: none; color: var(--text); min-width: 0; }
+.cmtrow input[type=text]:focus { border-color: var(--accent); }
+.iconbtn { background: var(--card); border: 1px solid var(--line); border-radius: 50%; width: 34px; height: 34px; cursor: pointer; font-size: 15px; flex: none; color: var(--text); }
+#sharebtn { display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
+#sharebtn:active { transform: scale(.94); }
+.btn.small { padding: 7px 13px; font-size: 14px; }
+.pendingfile { font-size: 12px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+.hiddenfile { display: none; }
+.divider { padding: 14px 14px 8px; border-top: 1px solid var(--line); font-size: 12.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+#opentasks:empty ~ .divider { border-top: 0; }
+#donelist .task { opacity: .75; }
+.empty { text-align: center; color: var(--muted); padding: 36px 24px; }
+.empty .big { font-size: 40px; margin-bottom: 10px; }
+.empty p { margin: 4px 0; font-size: 14.5px; }
+footer {
+position: fixed; bottom: 0; left: 0; right: 0;
+background: linear-gradient(to top, var(--bg) 65%, transparent);
+padding: 18px 16px calc(14px + env(safe-area-inset-bottom));
+pointer-events: none;
+}
+.foot-inner {
+max-width: 600px; margin: 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+font-size: 13px; color: var(--muted); pointer-events: auto;
+}
+.conn { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+/* text-decoration instead of border-bottom: keeps the name on the same baseline as the rest */
+.conn .editable { border-bottom: 0; padding-bottom: 0; text-decoration: underline dotted; text-underline-offset: 2px; }
+.conn .editable:hover { color: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; }
+.dot.on { background: var(--done); }
+#aboutlink { margin-left: auto; color: var(--muted); cursor: pointer; text-decoration: underline dotted; }
+#aboutlink:hover { color: var(--accent); }
+#toast {
+position: fixed; left: 50%; bottom: calc(74px + env(safe-area-inset-bottom));
+transform: translateX(-50%) translateY(8px);
+background: var(--text); color: var(--bg);
+padding: 9px 16px; border-radius: 999px; font-size: 14px; font-weight: 600;
+opacity: 0; pointer-events: none; transition: all .22s; white-space: nowrap; z-index: 90;
+max-width: 92vw; overflow: hidden; text-overflow: ellipsis;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* modal */
+#overlay {
+position: fixed; inset: 0; background: rgba(10,10,16,.45);
+display: none; align-items: flex-end; justify-content: center; z-index: 80;
+backdrop-filter: blur(2px);
+}
+#overlay.show { display: flex; }
+#modal {
+background: var(--card); color: var(--text);
+border-radius: 20px 20px 0 0; padding: 22px 20px calc(22px + env(safe-area-inset-bottom));
+width: 100%; max-width: 600px; box-shadow: var(--shadow);
+animation: rise .2s ease-out;
+}
+@media (min-width: 640px) {
+#overlay { align-items: center; }
+#modal { border-radius: 20px; margin: 20px; padding-bottom: 22px; }
+}
+@keyframes rise { from { transform: translateY(24px); opacity: .6; } }
+#modal h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: -.01em; }
+#modal p { margin: 4px 0 14px; color: var(--muted); font-size: 14px; }
+#modal input[type=text] {
+width: 100%; font: inherit; font-size: 17px; color: var(--text);
+background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+padding: 11px 13px; outline: none; margin-bottom: 14px;
+}
+#modal input[type=text]:focus { border-color: var(--accent); }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.qrbox { display: flex; justify-content: center; margin: 4px 0 14px; }
+.qrbox svg { border-radius: 12px; border: 1px solid var(--line); }
+.urlline {
+font-size: 13px; color: var(--muted); background: var(--bg);
+border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+overflow-wrap: anywhere; margin-bottom: 14px; user-select: all;
+}
+.about-key { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div id="stack">
+<section class="tl open" id="activelist">
+<div class="tl-head" id="activehead" title="Collapse or expand this tasklist">
+<div class="tl-title">
+<span class="editable" id="titlename" title="Set your name">Anon</span><span id="possessive">'s</span>
+<span class="editable" id="listname" title="Rename this tasklist">tasklist</span>
+</div>
+<span class="todo-chip" id="todocount" hidden></span>
+<button class="iconbtn" id="sharebtn" title="Share this tasklist" aria-label="Share this tasklist"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>
+</div>
+<div id="activebody">
+<div class="addrow">
+<input id="newtask" type="text" placeholder="Add a task and press enter…" autocomplete="off" enterkeyhint="done">
+<button class="btn" id="addbtn" aria-label="Add task">+</button>
+</div>
+<div class="list" id="opentasks"></div>
+<div class="empty" id="empty" hidden>
+<div class="big">📝</div>
+<p><strong>This tasklist is empty.</strong></p>
+<p>Type a task above — then share the link (↑ top right)<br>so others can grab tasks and check them off with you, live.</p>
+</div>
+<div class="divider" id="donedivider" hidden>Done</div>
+<div class="list" id="donelist"></div>
+</div>
+</section>
+</div>
+<div class="newrow"><button class="btn ghost" id="newlistbtn" title="Start a new tasklist">＋ New tasklist</button></div>
+</div>
+<footer>
+<div class="foot-inner">
+<span class="conn" id="conn" title="Changes are saved on this device and sync when connected."><span class="dot" id="conndot"></span><span>connected as</span><span class="editable" id="footname" title="Change your name">Anon</span><span id="conntxt">to 0 relays</span></span>
+<span id="aboutlink">About tasklist</span>
+</div>
+</footer>
+<div id="toast"></div>
+<div id="overlay"><div id="modal" role="dialog"></div></div>
+<script>
+(function (root) {
+'use strict';
+const P = 2n ** 256n - 2n ** 32n - 977n;
+const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+const Gx = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798n;
+const Gy = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n;
+const mod = (a, m) => ((a % m) + m) % m;
+function modpow(b, e, m) {
+b = mod(b, m);
+let r = 1n;
+while (e > 0n) {
+if (e & 1n) r = (r * b) % m;
+b = (b * b) % m;
+e >>= 1n;
+}
+return r;
+}
+const inv = (a, m) => modpow(mod(a, m), m - 2n, m); // Fermat (m prime)
+const IDENT = { x: 1n, y: 1n, z: 0n };
+function jDouble(pt) {
+if (pt.z === 0n) return pt;
+const { x: X1, y: Y1, z: Z1 } = pt;
+const A = mod(X1 * X1, P);
+const B = mod(Y1 * Y1, P);
+const C = mod(B * B, P);
+let D = mod((X1 + B) * (X1 + B) - A - C, P);
+D = mod(2n * D, P);
+const E = mod(3n * A, P);
+const F = mod(E * E, P);
+const X3 = mod(F - 2n * D, P);
+const Y3 = mod(E * (D - X3) - 8n * C, P);
+const Z3 = mod(2n * Y1 * Z1, P);
+return { x: X3, y: Y3, z: Z3 };
+}
+function jAdd(p1, p2) {
+if (p1.z === 0n) return p2;
+if (p2.z === 0n) return p1;
+const Z1Z1 = mod(p1.z * p1.z, P);
+const Z2Z2 = mod(p2.z * p2.z, P);
+const U1 = mod(p1.x * Z2Z2, P);
+const U2 = mod(p2.x * Z1Z1, P);
+const S1 = mod(p1.y * p2.z * Z2Z2, P);
+const S2 = mod(p2.y * p1.z * Z1Z1, P);
+const H = mod(U2 - U1, P);
+const R = mod(S2 - S1, P);
+if (H === 0n) {
+if (R === 0n) return jDouble(p1); // same point
+return IDENT; // inverse points
+}
+const HH = mod(H * H, P);
+const HHH = mod(H * HH, P);
+const V = mod(U1 * HH, P);
+const X3 = mod(R * R - HHH - 2n * V, P);
+const Y3 = mod(R * (V - X3) - S1 * HHH, P);
+const Z3 = mod(H * p1.z * p2.z, P);
+return { x: X3, y: Y3, z: Z3 };
+}
+function jMulG(k) {
+let acc = IDENT;
+const base = { x: Gx, y: Gy, z: 1n };
+k = mod(k, N);
+for (let i = 255; i >= 0; i--) {
+acc = jDouble(acc);
+if ((k >> BigInt(i)) & 1n) acc = jAdd(acc, base);
+}
+return acc;
+}
+function toAffine(pt) {
+if (pt.z === 0n) throw new Error('point at infinity');
+const zi = inv(pt.z, P);
+const zi2 = mod(zi * zi, P);
+return { x: mod(pt.x * zi2, P), y: mod(pt.y * zi2 * zi, P) };
+}
+function bytesToHex(b) {
+let s = '';
+for (let i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, '0');
+return s;
+}
+function hexToBytes(h) {
+const out = new Uint8Array(h.length / 2);
+for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+return out;
+}
+function bytesToBig(b) {
+let r = 0n;
+for (let i = 0; i < b.length; i++) r = (r << 8n) | BigInt(b[i]);
+return r;
+}
+function bigTo32(x) {
+const out = new Uint8Array(32);
+for (let i = 31; i >= 0; i--) {
+out[i] = Number(x & 0xffn);
+x >>= 8n;
+}
+return out;
+}
+function concatBytes(...arrs) {
+const len = arrs.reduce((a, b) => a + b.length, 0);
+const out = new Uint8Array(len);
+let o = 0;
+for (const a of arrs) { out.set(a, o); o += a.length; }
+return out;
+}
+const utf8 = (s) => new TextEncoder().encode(s);
+const subtle = (root.crypto || require('crypto').webcrypto).subtle;
+async function sha256(bytes) {
+return new Uint8Array(await subtle.digest('SHA-256', bytes));
+}
+const tagHashCache = {};
+async function taggedHash(tag, ...data) {
+if (!tagHashCache[tag]) tagHashCache[tag] = await sha256(utf8(tag));
+const th = tagHashCache[tag];
+return sha256(concatBytes(th, th, ...data));
+}
+function generateSecretKey() {
+while (true) {
+const b = new Uint8Array(32);
+(root.crypto || require('crypto').webcrypto).getRandomValues(b);
+const d = bytesToBig(b);
+if (d > 0n && d < N) return b;
+}
+}
+function getPublicKeyPoint(skBytes) {
+const d = bytesToBig(skBytes);
+if (d <= 0n || d >= N) throw new Error('invalid secret key');
+return toAffine(jMulG(d));
+}
+function getPublicKey(skBytes) {
+return bytesToHex(bigTo32(getPublicKeyPoint(skBytes).x));
+}
+async function schnorrSign(msg32, skBytes, auxRand) {
+const d0 = bytesToBig(skBytes);
+if (d0 <= 0n || d0 >= N) throw new Error('invalid secret key');
+const Ppt = toAffine(jMulG(d0));
+const d = (Ppt.y & 1n) === 0n ? d0 : N - d0;
+const aux = auxRand || (() => {
+const b = new Uint8Array(32);
+(root.crypto || require('crypto').webcrypto).getRandomValues(b);
+return b;
+})();
+const t = d ^ bytesToBig(await taggedHash('BIP0340/aux', aux));
+const rand = await taggedHash('BIP0340/nonce', bigTo32(t), bigTo32(Ppt.x), msg32);
+const k0 = mod(bytesToBig(rand), N);
+if (k0 === 0n) throw new Error('bad nonce');
+const Rpt = toAffine(jMulG(k0));
+const k = (Rpt.y & 1n) === 0n ? k0 : N - k0;
+const e = mod(
+bytesToBig(await taggedHash('BIP0340/challenge', bigTo32(Rpt.x), bigTo32(Ppt.x), msg32)),
+N
+);
+return concatBytes(bigTo32(Rpt.x), bigTo32(mod(k + e * d, N)));
+}
+const B32C = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+function b32polymod(values) {
+const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+let chk = 1;
+for (const v of values) {
+const top = chk >> 25;
+chk = ((chk & 0x1ffffff) << 5) ^ v;
+for (let i = 0; i < 5; i++) if ((top >> i) & 1) chk ^= GEN[i];
+}
+return chk;
+}
+function b32hrpExpand(hrp) {
+const out = [];
+for (const c of hrp) out.push(c.charCodeAt(0) >> 5);
+out.push(0);
+for (const c of hrp) out.push(c.charCodeAt(0) & 31);
+return out;
+}
+function bech32Encode(hrp, data8) {
+const d5 = [];
+let acc = 0, bits = 0;
+for (const b of data8) {
+acc = (acc << 8) | b;
+bits += 8;
+while (bits >= 5) {
+bits -= 5;
+d5.push((acc >> bits) & 31);
+}
+}
+if (bits > 0) d5.push((acc << (5 - bits)) & 31);
+const values = b32hrpExpand(hrp).concat(d5).concat([0, 0, 0, 0, 0, 0]);
+const polymod = b32polymod(values) ^ 1;
+const chk = [];
+for (let i = 0; i < 6; i++) chk.push((polymod >> (5 * (5 - i))) & 31);
+return hrp + '1' + d5.concat(chk).map((v) => B32C[v]).join('');
+}
+const nsecEncode = (skBytes) => bech32Encode('nsec', skBytes);
+const npubEncode = (pkHex) => bech32Encode('npub', hexToBytes(pkHex));
+async function finalizeEvent(evt, skBytes) {
+const pubkey = getPublicKey(skBytes);
+const e = {
+pubkey,
+created_at: evt.created_at,
+kind: evt.kind,
+tags: evt.tags || [],
+content: evt.content || '',
+};
+const ser = JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content]);
+const idBytes = await sha256(utf8(ser));
+e.id = bytesToHex(idBytes);
+e.sig = bytesToHex(await schnorrSign(idBytes, skBytes));
+return e;
+}
+root.NostrCrypto = {
+generateSecretKey,
+getPublicKey,
+schnorrSign,
+finalizeEvent,
+sha256,
+taggedHash,
+bytesToHex,
+hexToBytes,
+nsecEncode,
+npubEncode,
+};
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>
+(function (root) {
+'use strict';
+const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
+(function () {
+let x = 1;
+for (let i = 0; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; }
+for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+})();
+const gmul = (a, b) => (a && b ? EXP[LOG[a] + LOG[b]] : 0);
+function rsGenPoly(deg) {
+let poly = [1];
+for (let i = 0; i < deg; i++) {
+const next = new Array(poly.length + 1).fill(0);
+for (let j = 0; j < poly.length; j++) {
+next[j] ^= gmul(poly[j], EXP[i]);
+next[j + 1] ^= poly[j];
+}
+poly = next;
+}
+return poly.reverse(); // descending degree; poly[0] === 1 (leading)
+}
+function rsEncode(data, deg) {
+const gen = rsGenPoly(deg);
+const res = new Uint8Array(deg);
+for (const d of data) {
+const f = d ^ res[0];
+res.copyWithin(0, 1);
+res[deg - 1] = 0;
+if (f) for (let i = 0; i < deg; i++) res[i] ^= gmul(gen[i + 1], f);
+}
+return res;
+}
+const BLOCKS_M = {
+1: [10, [1, 16]],
+2: [16, [1, 28]],
+3: [26, [1, 44]],
+4: [18, [2, 32]],
+5: [24, [2, 43]],
+6: [16, [4, 27]],
+7: [18, [4, 31]],
+8: [22, [2, 38], [2, 39]],
+9: [22, [3, 36], [2, 37]],
+10: [26, [4, 43], [1, 44]],
+};
+const ALIGN = {
+1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30],
+6: [6, 34], 7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50],
+};
+function dataCapacity(v) {
+const b = BLOCKS_M[v];
+let dcw = b[1][0] * b[1][1] + (b[2] ? b[2][0] * b[2][1] : 0);
+return dcw;
+}
+function makeQR(text, forceMask) {
+const bytes = new TextEncoder().encode(text);
+let version = 0;
+for (let v = 1; v <= 10; v++) {
+const lenBits = v <= 9 ? 8 : 16;
+if (4 + lenBits + 8 * bytes.length <= 8 * dataCapacity(v)) { version = v; break; }
+}
+if (!version) return null;
+const size = 17 + 4 * version;
+const dcwTotal = dataCapacity(version);
+const lenBits = version <= 9 ? 8 : 16;
+const bits = [];
+const push = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+push(4, 4); // byte mode
+push(bytes.length, lenBits);
+for (const b of bytes) push(b, 8);
+push(0, Math.min(4, 8 * dcwTotal - bits.length)); // terminator
+while (bits.length % 8) bits.push(0);
+const data = [];
+for (let i = 0; i < bits.length; i += 8) {
+let b = 0;
+for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+data.push(b);
+}
+for (let pad = 0xec; data.length < dcwTotal; pad ^= 0xec ^ 0x11) data.push(pad);
+const spec = BLOCKS_M[version];
+const ecLen = spec[0];
+const blocks = [];
+let off = 0;
+for (const grp of [spec[1], spec[2]].filter(Boolean)) {
+for (let i = 0; i < grp[0]; i++) {
+const d = data.slice(off, off + grp[1]);
+off += grp[1];
+blocks.push({ d, e: rsEncode(d, ecLen) });
+}
+}
+const maxD = Math.max(...blocks.map((b) => b.d.length));
+const out = [];
+for (let i = 0; i < maxD; i++) for (const b of blocks) if (i < b.d.length) out.push(b.d[i]);
+for (let i = 0; i < ecLen; i++) for (const b of blocks) out.push(b.e[i]);
+const M = Array.from({ length: size }, () => new Uint8Array(size)); // 1 dark
+const F = Array.from({ length: size }, () => new Uint8Array(size)); // function/reserved
+const set = (y, x, dark) => { M[y][x] = dark ? 1 : 0; F[y][x] = 1; };
+function finder(y0, x0) {
+for (let dy = -1; dy <= 7; dy++) for (let dx = -1; dx <= 7; dx++) {
+const y = y0 + dy, x = x0 + dx;
+if (y < 0 || x < 0 || y >= size || x >= size) continue;
+const inRing = dy >= 0 && dy <= 6 && dx >= 0 && dx <= 6 &&
+(dy === 0 || dy === 6 || dx === 0 || dx === 6 || (dy >= 2 && dy <= 4 && dx >= 2 && dx <= 4));
+set(y, x, inRing);
+}
+}
+finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+for (let i = 8; i < size - 8; i++) {
+if (!F[6][i]) set(6, i, i % 2 === 0);
+if (!F[i][6]) set(i, 6, i % 2 === 0);
+}
+const ap = ALIGN[version];
+const apMax = ap[ap.length - 1];
+for (const cy of ap) for (const cx of ap) {
+if ((cy === 6 && cx === 6) || (cy === 6 && cx === apMax) || (cy === apMax && cx === 6)) continue;
+for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+set(cy + dy, cx + dx, Math.max(Math.abs(dy), Math.abs(dx)) !== 1);
+}
+}
+for (let i = 0; i <= 8; i++) {
+if (i !== 6) { F[8][i] = 1; F[i][8] = 1; }
+if (i < 8) { F[8][size - 1 - i] = 1; F[size - 1 - i][8] = 1; }
+}
+set(size - 8, 8, true); // dark module
+if (version >= 7) {
+let rem = version;
+for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1f25);
+const vbits = (version << 12) | rem;
+for (let i = 0; i < 18; i++) {
+const bit = (vbits >>> i) & 1;
+const a = size - 11 + (i % 3), b = Math.floor(i / 3);
+set(a, b, bit); set(b, a, bit);
+}
+}
+let bi = 0;
+for (let right = size - 1; right >= 1; right -= 2) {
+if (right === 6) right = 5;
+for (let vert = 0; vert < size; vert++) {
+for (let j = 0; j < 2; j++) {
+const x = right - j;
+const upward = ((right + 1) & 2) === 0;
+const y = upward ? size - 1 - vert : vert;
+if (!F[y][x]) {
+M[y][x] = bi < out.length * 8 ? (out[bi >> 3] >>> (7 - (bi & 7))) & 1 : 0;
+bi++;
+}
+}
+}
+}
+const maskFn = [
+(y, x) => (x + y) % 2 === 0,
+(y, x) => y % 2 === 0,
+(y, x) => x % 3 === 0,
+(y, x) => (x + y) % 3 === 0,
+(y, x) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+(y, x) => ((x * y) % 2) + ((x * y) % 3) === 0,
+(y, x) => (((x * y) % 2) + ((x * y) % 3)) % 2 === 0,
+(y, x) => (((x + y) % 2) + ((x * y) % 3)) % 2 === 0,
+];
+function applyMask(m) {
+for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+if (!F[y][x] && maskFn[m](y, x)) M[y][x] ^= 1;
+}
+}
+function drawFormat(mask) {
+let d = (0 /* ECC M */ << 3) | mask;
+let rem = d;
+for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+const fb = ((d << 10) | rem) ^ 0x5412;
+const g = (i) => ((fb >>> (14 - i)) & 1) === 1;
+for (let i = 0; i <= 5; i++) { M[8][i] = g(i); }
+M[8][7] = g(6); M[8][8] = g(7); M[7][8] = g(8);
+for (let i = 9; i < 15; i++) M[14 - i][8] = g(i);
+for (let i = 0; i < 7; i++) M[size - 1 - i][8] = g(i);
+for (let i = 7; i < 15; i++) M[8][size - 15 + i] = g(i);
+M[size - 8][8] = 1;
+}
+function penalty() {
+let p = 0;
+for (let dir = 0; dir < 2; dir++) {
+for (let i = 0; i < size; i++) {
+let run = 1;
+for (let j = 1; j < size; j++) {
+const cur = dir ? M[j][i] : M[i][j];
+const prev = dir ? M[j - 1][i] : M[i][j - 1];
+if (cur === prev) { run++; if (j === size - 1 && run >= 5) p += run - 2; }
+else { if (run >= 5) p += run - 2; run = 1; }
+}
+}
+}
+for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) {
+const c = M[y][x];
+if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) p += 3;
+}
+const pat1 = [1,0,1,1,1,0,1,0,0,0,0], pat2 = [0,0,0,0,1,0,1,1,1,0,1];
+for (let dir = 0; dir < 2; dir++) {
+for (let i = 0; i < size; i++) for (let j = 0; j <= size - 11; j++) {
+let m1 = true, m2 = true;
+for (let k = 0; k < 11; k++) {
+const v = dir ? M[j + k][i] : M[i][j + k];
+if (v !== pat1[k]) m1 = false;
+if (v !== pat2[k]) m2 = false;
+}
+if (m1) p += 40;
+if (m2) p += 40;
+}
+}
+let dark = 0;
+for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) dark += M[y][x];
+p += Math.floor(Math.abs((dark * 100) / (size * size) - 50) / 5) * 10;
+return p;
+}
+let best = forceMask != null ? forceMask : -1, bestP = Infinity;
+for (let m = 0; forceMask == null && m < 8; m++) {
+applyMask(m);
+drawFormat(m);
+const p = penalty();
+if (p < bestP) { bestP = p; best = m; }
+applyMask(m); // unmask
+}
+applyMask(best);
+drawFormat(best);
+return { size, modules: M, version, mask: best };
+}
+function qrSvg(text, px) {
+const qr = makeQR(text);
+if (!qr) return null;
+const { size, modules } = qr;
+const quiet = 4, total = size + quiet * 2;
+let d = '';
+for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+if (modules[y][x]) d += 'M' + (x + quiet) + ' ' + (y + quiet) + 'h1v1h-1z';
+}
+return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + total + ' ' + total + '"' +
+(px ? ' width="' + px + '" height="' + px + '"' : '') +
+' shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+}
+root.QR = { makeQR, qrSvg };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>
+(function () {
+'use strict';
+const C = window.NostrCrypto;
+const KIND_PROFILE = 0;   // profile metadata; content = JSON {name}
+const KIND_TASK = 2100;   // task creation; content = title
+const KIND_ACTION = 2101; // claim / unclaim / done / undone / delete
+const KIND_META = 2102;   // list metadata; content = list name
+const KIND_COMMENT = 2103;// comment on a task; content = text, optional attachment tag
+const KIND_BLOSSOM_AUTH = 24242;
+const DEFAULT_RELAYS = [
+'wss://relay.damus.io',
+'wss://nos.lol',
+'wss://relay.primal.net',
+'wss://offchain.pub',
+];
+const LS = {
+sk: 'tasklist.sk',
+name: 'tasklist.name',
+relays: 'tasklist.relays',
+blossom: 'tasklist.blossom',
+lists: 'tasklist.lists',
+cache: (id) => 'tasklist.cache.' + id,
+pending: (id) => 'tasklist.pending.' + id,
+};
+const BLOSSOM = (localStorage.getItem(LS.blossom) || 'https://blossom.primal.net').replace(/\/$/, '');
+const MAX_UPLOAD = 10 * 1024 * 1024;
+let skHex = localStorage.getItem(LS.sk);
+if (!skHex || !/^[0-9a-f]{64}$/.test(skHex)) {
+skHex = C.bytesToHex(C.generateSecretKey());
+localStorage.setItem(LS.sk, skHex);
+}
+const sk = C.hexToBytes(skHex);
+const ME = C.getPublicKey(sk);
+function colorFor(pk) {
+const b = C.hexToBytes(pk);
+const hue = ((b[2] << 8) | b[3]) % 360;
+return 'hsl(' + hue + ', 65%, 55%)';
+}
+let myName = (localStorage.getItem(LS.name) || '').trim();
+function randomListId() {
+const b = new Uint8Array(8);
+crypto.getRandomValues(b);
+return C.bytesToHex(b);
+}
+let listId = (location.hash || '').replace(/^#\/?/, '').replace(/[^a-zA-Z0-9_-]/g, '');
+if (!listId) {
+listId = randomListId();
+history.replaceState(null, '', '#' + listId);
+}
+window.addEventListener('hashchange', () => location.reload());
+const seen = new Set();
+const tasks = new Map();      // taskId -> {id, title, creator, createdAt}
+const actions = new Map();    // taskId -> [{id, pubkey, created_at, act}]
+const comments = new Map();   // taskId -> [{id, pubkey, created_at, text, att}]
+const names = new Map();      // pubkey -> {name, at}
+const authors = new Set();
+let listMeta = { name: '', at: 0, evtId: '' };
+let earliest = null;          // earliest list event -> list owner
+let lastCreatedAt = 0;
+let expandedId = null;        // task with open thread
+const drafts = new Map();     // taskId -> comment draft text
+const pendingFiles = new Map();// taskId -> File waiting to be sent
+const uploading = new Set();  // taskIds with an in-flight upload
+function loadJSON(key, fallback) {
+try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
+}
+let cacheEvents = loadJSON(LS.cache(listId), []);
+let pending = loadJSON(LS.pending(listId), {});
+// Registry of tasklists opened on this device: [{id, lastOpened}]
+let knownLists = (loadJSON(LS.lists, []) || []).filter((l) =>
+l && typeof l.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(l.id) &&
+(l.id === listId || loadJSON(LS.cache(l.id), []).length > 0));
+// Stack order is stable: existing entries never move; new lists go on top.
+{
+const cur = knownLists.find((l) => l.id === listId);
+if (cur) cur.lastOpened = Date.now();
+else knownLists.unshift({ id: listId, lastOpened: Date.now() });
+}
+function saveLists() {
+try { localStorage.setItem(LS.lists, JSON.stringify(knownLists)); } catch {}
+}
+saveLists();
+let cacheTimer = null;
+function saveCache() {
+clearTimeout(cacheTimer);
+cacheTimer = setTimeout(() => {
+try {
+if (cacheEvents.length > 2000) cacheEvents = cacheEvents.slice(-2000);
+localStorage.setItem(LS.cache(listId), JSON.stringify(cacheEvents));
+} catch {}
+}, 250);
+}
+function savePending() {
+try { localStorage.setItem(LS.pending(listId), JSON.stringify(pending)); } catch {}
+}
+function tagOf(evt, name) {
+return (evt.tags || []).find((t) => t[0] === name);
+}
+function tagVal(evt, name) {
+const t = tagOf(evt, name);
+return t ? t[1] : undefined;
+}
+function learnName(pk, name, at) {
+if (!name || pk === ME) return;
+const cur = names.get(pk);
+if (!cur || at >= cur.at) names.set(pk, { name: String(name).slice(0, 24), at });
+}
+function trackAuthor(pk) {
+if (!authors.has(pk)) {
+authors.add(pk);
+scheduleProfileSub();
+}
+}
+function trackEarliest(evt) {
+if (!earliest || evt.created_at < earliest.at ||
+(evt.created_at === earliest.at && evt.id < earliest.id)) {
+earliest = { at: evt.created_at, id: evt.id, pubkey: evt.pubkey };
+}
+}
+function processEvent(evt, fromCache) {
+if (!evt || !evt.id || seen.has(evt.id)) return;
+if (evt.kind === KIND_PROFILE) {
+seen.add(evt.id);
+try { learnName(evt.pubkey, JSON.parse(evt.content).name, evt.created_at); } catch {}
+if (!fromCache) { cacheEvents.push(evt); saveCache(); }
+scheduleRender();
+return;
+}
+if (![KIND_TASK, KIND_ACTION, KIND_META, KIND_COMMENT].includes(evt.kind)) return;
+if (tagVal(evt, 't') !== listId) return;
+seen.add(evt.id);
+trackAuthor(evt.pubkey);
+trackEarliest(evt);
+learnName(evt.pubkey, tagVal(evt, 'name'), evt.created_at);
+if (evt.kind === KIND_TASK) {
+const title = String(evt.content || '').slice(0, 300).trim();
+if (title) tasks.set(evt.id, { id: evt.id, title, creator: evt.pubkey, createdAt: evt.created_at });
+} else if (evt.kind === KIND_ACTION) {
+const taskId = tagVal(evt, 'e');
+const act = tagVal(evt, 'action');
+if (!taskId || !['claim', 'unclaim', 'done', 'undone', 'delete'].includes(act)) return;
+if (!actions.has(taskId)) actions.set(taskId, []);
+actions.get(taskId).push({ id: evt.id, pubkey: evt.pubkey, created_at: evt.created_at, act });
+} else if (evt.kind === KIND_COMMENT) {
+const taskId = tagVal(evt, 'e');
+if (!taskId) return;
+let att = null;
+const a = tagOf(evt, 'attachment');
+if (a && /^https?:\/\//.test(a[1] || '')) {
+att = { url: a[1].slice(0, 500), mime: (a[2] || '').slice(0, 100), name: (a[3] || 'file').slice(0, 100) };
+}
+const text = String(evt.content || '').slice(0, 2000);
+if (!text && !att) return;
+if (!comments.has(taskId)) comments.set(taskId, []);
+comments.get(taskId).push({ id: evt.id, pubkey: evt.pubkey, created_at: evt.created_at, text, att });
+} else { // KIND_META
+const name = String(evt.content || '').slice(0, 48).trim();
+if (name && (evt.created_at > listMeta.at || (evt.created_at === listMeta.at && evt.id < listMeta.evtId))) {
+listMeta = { name, at: evt.created_at, evtId: evt.id };
+}
+}
+if (!fromCache) { cacheEvents.push(evt); saveCache(); }
+scheduleRender();
+}
+function taskState(t) {
+const acts = (actions.get(t.id) || []).slice().sort((a, b) =>
+a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+let assignee = null, done = false, doneBy = null, doneAt = 0, deleted = false;
+for (const a of acts) {
+if (a.act === 'claim') assignee = a.pubkey;
+else if (a.act === 'unclaim' && assignee === a.pubkey) assignee = null;
+else if (a.act === 'done') { done = true; doneBy = a.pubkey; doneAt = a.created_at; }
+else if (a.act === 'undone') done = false;
+else if (a.act === 'delete' && a.pubkey === t.creator) deleted = true;
+}
+return { assignee, done, doneBy, doneAt, deleted };
+}
+const relayUrls = loadJSON(LS.relays, null) || DEFAULT_RELAYS;
+const relays = relayUrls.map((url) => ({ url, ws: null, status: 'closed', backoff: 800 }));
+const SUB_ID = 'tl', SUB_PROFILES = 'tlp';
+function connUI() {
+const open = relays.filter((r) => r.status === 'open').length;
+document.getElementById('conndot').classList.toggle('on', open > 0);
+document.getElementById('conntxt').textContent = 'to ' + open + (open === 1 ? ' relay' : ' relays');
+}
+function profileFilter() {
+return { kinds: [KIND_PROFILE], authors: [...authors] };
+}
+let profSubTimer = null;
+function scheduleProfileSub() {
+clearTimeout(profSubTimer);
+profSubTimer = setTimeout(() => {
+const msg = JSON.stringify(['REQ', SUB_PROFILES, profileFilter()]);
+for (const r of relays) if (r.status === 'open') { try { r.ws.send(msg); } catch {} }
+}, 400);
+}
+function connect(r) {
+if (r.ws && (r.ws.readyState === 0 || r.ws.readyState === 1)) return;
+let ws;
+try { ws = new WebSocket(r.url); } catch { return retry(r); }
+r.ws = ws;
+r.status = 'connecting';
+const timer = setTimeout(() => { try { ws.close(); } catch {} }, 7000);
+ws.onopen = () => {
+clearTimeout(timer);
+r.status = 'open';
+r.backoff = 800;
+ws.send(JSON.stringify(['REQ', SUB_ID, { kinds: [KIND_TASK, KIND_ACTION, KIND_META, KIND_COMMENT], '#t': [listId], limit: 1000 }]));
+if (authors.size) ws.send(JSON.stringify(['REQ', SUB_PROFILES, profileFilter()]));
+for (const id in pending) ws.send(JSON.stringify(['EVENT', pending[id]]));
+connUI();
+};
+ws.onmessage = (m) => {
+let msg;
+try { msg = JSON.parse(m.data); } catch { return; }
+if (msg[0] === 'EVENT' && (msg[1] === SUB_ID || msg[1] === SUB_PROFILES)) processEvent(msg[2], false);
+else if (msg[0] === 'OK' && msg[2] === true && pending[msg[1]]) {
+delete pending[msg[1]];
+savePending();
+}
+};
+ws.onclose = () => { clearTimeout(timer); r.status = 'closed'; connUI(); retry(r); };
+ws.onerror = () => { try { ws.close(); } catch {} };
+}
+function retry(r) {
+if (r._t) return;
+r._t = setTimeout(() => { r._t = null; connect(r); }, r.backoff);
+r.backoff = Math.min(r.backoff * 1.7, 30000);
+}
+function publish(evt) {
+pending[evt.id] = evt;
+savePending();
+const msg = JSON.stringify(['EVENT', evt]);
+for (const r of relays) if (r.status === 'open') { try { r.ws.send(msg); } catch {} }
+}
+function now() {
+const t = Math.floor(Date.now() / 1000);
+lastCreatedAt = Math.max(t, lastCreatedAt + 1);
+return lastCreatedAt;
+}
+async function signAndSend(kind, tags, content) {
+const allTags = kind === KIND_PROFILE ? tags : tags.concat(
+[['t', listId], ['client', 'tasklist']], myName ? [['name', myName]] : []);
+const evt = await C.finalizeEvent({ kind, created_at: now(), tags: allTags, content }, sk);
+processEvent(evt, false);
+publish(evt);
+return evt;
+}
+async function addTask(title) {
+title = title.trim().slice(0, 300);
+if (!title) return;
+await signAndSend(KIND_TASK, [], title);
+}
+async function act(taskId, action) {
+await signAndSend(KIND_ACTION, [['e', taskId], ['action', action]], '');
+}
+async function setProfileName(name) {
+myName = name.trim().slice(0, 24);
+localStorage.setItem(LS.name, myName);
+if (myName) await signAndSend(KIND_PROFILE, [], JSON.stringify({ name: myName }));
+scheduleRender();
+}
+async function setListName(name) {
+name = name.trim().slice(0, 48);
+if (!name) return;
+await signAndSend(KIND_META, [], name);
+}
+const b64 = (str) => {
+const bytes = new TextEncoder().encode(str);
+let bin = '';
+for (const b of bytes) bin += String.fromCharCode(b);
+return btoa(bin);
+};
+async function uploadBlob(file) {
+if (file.size > MAX_UPLOAD) throw new Error('File is too big (10 MB max)');
+const buf = new Uint8Array(await file.arrayBuffer());
+const hashHex = C.bytesToHex(await C.sha256(buf));
+const ts = Math.floor(Date.now() / 1000);
+const auth = await C.finalizeEvent({
+kind: KIND_BLOSSOM_AUTH,
+created_at: ts,
+tags: [['t', 'upload'], ['x', hashHex], ['expiration', String(ts + 600)]],
+content: 'Upload ' + (file.name || 'file'),
+}, sk);
+const res = await fetch(BLOSSOM + '/upload', {
+method: 'PUT',
+headers: {
+Authorization: 'Nostr ' + b64(JSON.stringify(auth)),
+'Content-Type': file.type || 'application/octet-stream',
+},
+body: file,
+});
+if (!res.ok) throw new Error('Upload failed (' + res.status + ')');
+let url = null;
+try { url = (await res.json()).url; } catch {}
+return {
+url: url || BLOSSOM + '/' + hashHex,
+mime: file.type || 'application/octet-stream',
+name: file.name || 'file',
+};
+}
+const $ = (id) => document.getElementById(id);
+const toastEl = $('toast');
+let toastTimer = null;
+function toast(msg) {
+toastEl.textContent = msg;
+toastEl.classList.add('show');
+clearTimeout(toastTimer);
+toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+}
+function nameOf(pk) {
+if (pk === ME) return myName || 'Anon';
+const n = names.get(pk);
+return n ? n.name : 'Anon';
+}
+function relTime(at) {
+const d = Math.max(0, Math.floor(Date.now() / 1000) - at);
+if (d < 60) return 'now';
+if (d < 3600) return Math.floor(d / 60) + 'm';
+if (d < 86400) return Math.floor(d / 3600) + 'h';
+return Math.floor(d / 86400) + 'd';
+}
+function el(tag, attrs, ...children) {
+const n = document.createElement(tag);
+for (const k in attrs || {}) {
+if (attrs[k] == null) continue;
+if (k === 'class') n.className = attrs[k];
+else if (k.startsWith('on')) n[k] = attrs[k];
+else n.setAttribute(k, attrs[k]);
+}
+for (const c of children) n.append(c);
+return n;
+}
+function avatar(pk, cls) {
+const a = el('span', { class: 'avatar' + (cls ? ' ' + cls : '') });
+a.style.background = colorFor(pk);
+return a;
+}
+const overlay = $('overlay'), modal = $('modal');
+function closeModal() {
+overlay.classList.remove('show');
+modal.replaceChildren();
+}
+overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+function openModal(...children) {
+modal.replaceChildren(...children);
+overlay.classList.add('show');
+}
+function askText({ title, hint, value, placeholder, saveLabel, skipLabel, maxlength }, onSave, onSkip) {
+const input = el('input', { type: 'text', value: value || '', placeholder: placeholder || '', maxlength: maxlength || 48, id: 'modalinput', autocomplete: 'off' });
+const save = () => { closeModal(); onSave(input.value); };
+input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } };
+const buttons = [];
+if (skipLabel) buttons.push(el('button', { class: 'btn subtle', id: 'modalskip', onclick: () => { closeModal(); onSkip && onSkip(); } }, skipLabel));
+buttons.push(el('button', { class: 'btn', id: 'modalsave', onclick: save }, saveLabel || 'Save'));
+openModal(
+el('h2', {}, title),
+hint ? el('p', {}, hint) : '',
+input,
+el('div', { class: 'modal-actions' }, ...buttons)
+);
+setTimeout(() => { input.focus(); input.select(); }, 50);
+}
+function openShareModal() {
+const url = location.href;
+const label = listMeta.name || 'this tasklist';
+const box = el('div', { class: 'qrbox' });
+const svg = window.QR.qrSvg(url, 216);
+if (svg) box.innerHTML = svg;
+const buttons = [];
+if (navigator.share) {
+buttons.push(el('button', { class: 'btn subtle', onclick: async () => {
+try { await navigator.share({ title: 'tasklist', text: 'Join my tasklist “' + label + '”', url }); } catch {}
+} }, 'Share…'));
+}
+buttons.push(el('button', { class: 'btn', id: 'copylink', onclick: async () => {
+try { await navigator.clipboard.writeText(url); closeModal(); toast('Link to this tasklist copied'); }
+catch { prompt('Copy this link:', url); }
+} }, 'Copy link'));
+openModal(
+el('h2', {}, 'Share “' + label + '”'),
+el('p', {}, 'This link shares only this one tasklist — your other tasklists stay private. Anyone who opens it can add tasks, grab one, and check it off, live.'),
+box,
+el('div', { class: 'urlline', id: 'shareurl' }, url),
+el('div', { class: 'modal-actions' }, ...buttons)
+);
+}
+function openAboutModal() {
+const keyLine = el('p', { class: 'about-key' }, 'Identity: ' + C.npubEncode(ME).slice(0, 20) + '…');
+let revealed = false;
+const revealBtn = el('button', { class: 'btn subtle', onclick: () => {
+if (!revealed) {
+revealed = true;
+keyLine.textContent = 'Secret key (keep private): ' + C.nsecEncode(sk);
+revealBtn.textContent = 'Copy secret key';
+} else {
+navigator.clipboard.writeText(C.nsecEncode(sk)).then(() => toast('Secret key copied'));
+}
+} }, 'Backup identity');
+openModal(
+el('h2', {}, '✓ tasklist'),
+el('p', {}, 'Instant shared task lists. Type tasks, share the link, and coordinate in real time — grab a task, discuss it, check it off.'),
+el('p', {}, 'No accounts and no server of its own: everything is signed with a key created in this browser and synced through public relays. Clearing site data deletes that key, and this list is only as permanent as the relays that carry it.'),
+el('p', { id: 'aboutme' }, 'You appear as ', el('b', {}, myName || 'Anon'), ' ',
+el('button', { class: 'btn subtle small', id: 'aboutrename', onclick: () => { closeModal(); askProfileName(); } }, 'Change name')),
+keyLine,
+el('div', { class: 'modal-actions' }, revealBtn,
+el('button', { class: 'btn', onclick: closeModal }, 'Close'))
+);
+}
+function askProfileName(next) {
+askText({
+title: myName ? 'Change your name' : 'What should we call you?',
+hint: 'Shown on tasks you grab, comments you write, and lists you create.',
+value: myName,
+placeholder: 'e.g. Xavier',
+saveLabel: 'Save name',
+skipLabel: myName ? null : 'Stay anonymous',
+maxlength: 24,
+}, async (v) => {
+const name = v.trim();
+if (name && name !== myName) { await setProfileName(name); toast('Hi ' + name + '!'); }
+next && next();
+}, () => { next && next(); });
+}
+function claimTask(t) {
+const doClaim = () => { act(t.id, 'claim'); toast("It's yours — tap the circle when done"); };
+if (!myName) askProfileName(doClaim);
+else doClaim();
+}
+function circleTap(t) {
+const st = taskState(t);
+if (st.done) {
+act(t.id, 'undone');
+toast('Marked as not done');
+} else if (st.assignee === ME || (st.assignee === null && t.creator === ME)) {
+act(t.id, 'done');
+toast('Done ✓');
+} else {
+expandedId = t.id;
+scheduleRender();
+toast('Assign this task to yourself first');
+}
+}
+function toggleExpand(t) {
+expandedId = expandedId === t.id ? null : t.id;
+scheduleRender();
+}
+function sendComment(t) {
+const text = (drafts.get(t.id) || '').trim().slice(0, 2000);
+const file = pendingFiles.get(t.id);
+if ((!text && !file) || uploading.has(t.id)) return;
+const doSend = async () => {
+let att = null;
+if (file) {
+uploading.add(t.id);
+scheduleRender();
+try { att = await uploadBlob(file); }
+catch (e) { uploading.delete(t.id); scheduleRender(); toast(e.message || 'Upload failed'); return; }
+uploading.delete(t.id);
+}
+const tags = [['e', t.id]];
+if (att) tags.push(['attachment', att.url, att.mime, att.name]);
+drafts.delete(t.id);
+pendingFiles.delete(t.id);
+await signAndSend(KIND_COMMENT, tags, text);
+};
+if (!myName) askProfileName(doSend);
+else doSend();
+}
+function threadEntries(t) {
+const list = [{ sys: true, at: t.createdAt, id: t.id, pubkey: t.creator, text: 'created this task' }];
+for (const a of actions.get(t.id) || []) {
+const txt =
+a.act === 'claim' ? 'took this task' :
+a.act === 'unclaim' ? 'stepped away from this task' :
+a.act === 'done' ? 'marked this as done ✓' :
+a.act === 'undone' ? 'reopened this' : null;
+if (txt) list.push({ sys: true, at: a.created_at, id: a.id, pubkey: a.pubkey, text: txt });
+}
+for (const c of comments.get(t.id) || []) {
+list.push({ at: c.created_at, id: c.id, pubkey: c.pubkey, text: c.text, att: c.att });
+}
+return list.sort((x, y) => x.at - y.at || (x.id < y.id ? -1 : 1));
+}
+function buildThread(t, st) {
+const wrap = el('div', { class: 'thread', onclick: (e) => e.stopPropagation() });
+for (const en of threadEntries(t)) {
+const who = en.pubkey === ME ? 'You' : nameOf(en.pubkey);
+if (en.sys) {
+wrap.appendChild(el('div', { class: 'entry sys' },
+avatar(en.pubkey),
+el('span', {}, el('span', { class: 'who' }, who), ' ' + en.text),
+el('span', { class: 'when' }, relTime(en.at))));
+} else {
+const bubble = el('div', { class: 'bubble' },
+el('span', { class: 'who' }, who), ' ', el('span', { class: 'when' }, relTime(en.at)));
+if (en.text) bubble.appendChild(el('div', { class: 'cmt-text' }, en.text));
+if (en.att) {
+if (en.att.mime.startsWith('image/')) {
+bubble.appendChild(el('img', { src: en.att.url, alt: en.att.name, loading: 'lazy' }));
+} else {
+bubble.appendChild(el('a', { class: 'filechip', href: en.att.url, target: '_blank', rel: 'noopener' }, '📎 ' + en.att.name));
+}
+}
+wrap.appendChild(el('div', { class: 'entry' }, avatar(en.pubkey), bubble));
+}
+}
+if (!st.done && st.assignee !== ME && !(st.assignee === null && t.creator === ME)) {
+wrap.appendChild(el('div', { class: 'assignbar' },
+el('button', { class: 'btn small', id: 'assignbtn', onclick: () => claimTask(t) },
+st.assignee ? 'Take over this task' : 'Assign to me'),
+el('span', { class: 'assignhint' },
+st.assignee ? 'Currently with ' + nameOf(st.assignee) + '.' : 'Grab it before checking it off.')));
+}
+const fi = el('input', { type: 'file', class: 'hiddenfile' });
+fi.onchange = () => { pendingFiles.set(t.id, fi.files[0] || null); scheduleRender(); };
+const inp = el('input', { type: 'text', id: 'cmt-input', placeholder: 'Add a comment…', maxlength: 2000, autocomplete: 'off' });
+inp.value = drafts.get(t.id) || '';
+inp.oninput = () => drafts.set(t.id, inp.value);
+inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendComment(t); } };
+const isUp = uploading.has(t.id);
+wrap.appendChild(el('div', { class: 'cmtrow' },
+el('button', { class: 'iconbtn', title: 'Attach an image or file', onclick: () => fi.click() }, '📎'),
+fi, inp,
+el('button', { class: 'btn small', id: 'cmt-send', onclick: () => sendComment(t), disabled: isUp ? '' : null },
+isUp ? 'Uploading…' : 'Send')));
+const pf = pendingFiles.get(t.id);
+if (pf && !isUp) {
+wrap.appendChild(el('div', { class: 'pendingfile' }, '📎 ' + pf.name + ' attached — press Send ',
+el('a', { href: '#', onclick: (e) => { e.preventDefault(); pendingFiles.delete(t.id); scheduleRender(); } }, '(remove)')));
+}
+return wrap;
+}
+function rowFor(t, st) {
+const row = document.createElement('div');
+row.className = 'task' + (st.done ? ' done' : '') +
+(st.assignee === ME ? ' mine' : st.assignee ? ' claimed' : '') +
+(!st.done && st.assignee !== ME && !(st.assignee === null && t.creator === ME) ? ' grab' : '');
+row.dataset.id = t.id;
+const check = el('div', { class: 'check', title: st.done ? 'Mark as not done' : 'Mark as done', onclick: (e) => {
+e.stopPropagation();
+circleTap(t);
+} }, st.done ? '✓' : '');
+const title = el('div', { class: 'title' }, t.title);
+row.append(check, title);
+const nComments = (comments.get(t.id) || []).length;
+if (nComments) row.appendChild(el('span', { class: 'chip', title: 'comments' }, '💬 ' + nComments));
+const who = st.done ? (st.doneBy || st.assignee) : st.assignee;
+if (who) {
+const chip = el('div', { class: 'chip', title: st.done ? 'completed by' : 'assigned to' },
+avatar(who), el('span', {}, who === ME ? 'you' : nameOf(who)));
+row.appendChild(chip);
+}
+if (t.creator === ME) {
+row.appendChild(el('button', { class: 'del', title: 'Delete task', onclick: (e) => {
+e.stopPropagation();
+act(t.id, 'delete');
+toast('Task deleted');
+} }, '✕'));
+}
+row.onclick = () => toggleExpand(t);
+return row;
+}
+let renderQueued = false;
+function scheduleRender() {
+if (renderQueued) return;
+renderQueued = true;
+requestAnimationFrame(() => { renderQueued = false; render(); });
+}
+function ownerPk() { return earliest ? earliest.pubkey : ME; }
+// Fold a list's cached events into {name, ownerName, open, total} without touching live state.
+function summarizeList(id) {
+const evts = loadJSON(LS.cache(id), []).concat(Object.values(loadJSON(LS.pending(id), {})));
+let meta = { name: '', at: 0 };
+let first = null;
+const ts = new Map(), ac = new Map(), nm = new Map();
+const learn = (pk, name, at) => {
+if (!name) return;
+const cur = nm.get(pk);
+if (!cur || at >= cur.at) nm.set(pk, { name: String(name).slice(0, 24), at });
+};
+for (const e of evts) {
+if (!e || !e.id) continue;
+if (e.kind === KIND_PROFILE) {
+try { learn(e.pubkey, JSON.parse(e.content).name, e.created_at); } catch {}
+continue;
+}
+const nt = (e.tags || []).find((t) => t[0] === 'name');
+if (nt) learn(e.pubkey, nt[1], e.created_at);
+if (!first || e.created_at < first.created_at || (e.created_at === first.created_at && e.id < first.id)) first = e;
+const eTag = (e.tags || []).find((t) => t[0] === 'e');
+const aTag = (e.tags || []).find((t) => t[0] === 'action');
+if (e.kind === KIND_TASK) {
+if (String(e.content || '').trim()) ts.set(e.id, { creator: e.pubkey });
+} else if (e.kind === KIND_ACTION && eTag && aTag) {
+if (!ac.has(eTag[1])) ac.set(eTag[1], []);
+ac.get(eTag[1]).push({ pubkey: e.pubkey, created_at: e.created_at, id: e.id, act: aTag[1] });
+} else if (e.kind === KIND_META) {
+const n = String(e.content || '').slice(0, 48).trim();
+if (n && e.created_at >= meta.at) meta = { name: n, at: e.created_at };
+}
+}
+let open = 0, total = 0;
+for (const [tid, t] of ts) {
+const acts = (ac.get(tid) || []).sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+let done = false, deleted = false;
+for (const a of acts) {
+if (a.act === 'done') done = true;
+else if (a.act === 'undone') done = false;
+else if (a.act === 'delete' && a.pubkey === t.creator) deleted = true;
+}
+if (deleted) continue;
+total++;
+if (!done) open++;
+}
+const op = first ? first.pubkey : null;
+const ownerName = !op || op === ME ? (myName || 'Anon') : ((nm.get(op) || {}).name || 'Anon');
+return { id, name: meta.name || 'tasklist', ownerName, open, total };
+}
+function todoChip(open, total) {
+if (!total) return '';
+return el('span', { class: 'todo-chip' + (open ? '' : ' zero') }, open ? open + ' to do' : 'all done ✓');
+}
+function removeList(id) {
+knownLists = knownLists.filter((l) => l.id !== id);
+saveLists();
+try {
+localStorage.removeItem(LS.cache(id));
+localStorage.removeItem(LS.pending(id));
+} catch {}
+renderStack();
+toast('Tasklist removed from this device');
+}
+function confirmRemove(id, label) {
+openModal(
+el('h2', {}, 'Remove “' + label + '”?'),
+el('p', {}, 'This only removes it from this device — the tasklist itself keeps existing, and anyone with the link (including you) can still open it.'),
+el('div', { class: 'modal-actions' },
+el('button', { class: 'btn subtle', onclick: closeModal }, 'Cancel'),
+el('button', { class: 'btn danger', id: 'confirmremove', onclick: () => { closeModal(); removeList(id); } }, 'Remove'))
+);
+}
+// Rebuild the card stack in registry order; the active list keeps its position and
+// stays the same live DOM node (listeners, focus state, drafts all survive).
+function renderStack() {
+$('stack').replaceChildren(...knownLists.map((l) => {
+if (l.id === listId) return $('activelist');
+const s = summarizeList(l.id);
+const head = el('div', { class: 'tl-head', title: 'Open this tasklist', onclick: () => { location.hash = '#' + l.id; } },
+el('div', { class: 'tl-title' }, s.ownerName + "'s " + s.name),
+todoChip(s.open, s.total),
+el('button', { class: 'del', title: 'Remove this tasklist from this device', onclick: (e) => {
+e.stopPropagation();
+confirmRemove(l.id, s.ownerName + "'s " + s.name);
+} }, '✕'));
+return el('section', { class: 'tl closed' }, head);
+}));
+}
+function renderTitle() {
+const owner = ownerPk();
+const tn = $('titlename');
+tn.textContent = owner === ME ? (myName || 'Anon') : nameOf(owner);
+tn.classList.toggle('editable', owner === ME);
+tn.title = owner === ME ? 'Set your name' : 'List created by ' + nameOf(owner);
+$('listname').textContent = listMeta.name || 'tasklist';
+$('footname').textContent = myName || 'Anon';
+document.title = tn.textContent + "'s " + $('listname').textContent + ' — tasklist';
+}
+function render() {
+renderTitle();
+const open = [], done = [];
+for (const t of tasks.values()) {
+const st = taskState(t);
+if (st.deleted) continue;
+(st.done ? done : open).push({ t, st });
+}
+open.sort((a, b) => a.t.createdAt - b.t.createdAt || (a.t.id < b.t.id ? -1 : 1));
+done.sort((a, b) => b.st.doneAt - a.st.doneAt);
+const wasFocused = document.activeElement && document.activeElement.id === 'cmt-input';
+const rows = (arr) => arr.flatMap(({ t, st }) =>
+t.id === expandedId ? [rowFor(t, st), buildThread(t, st)] : [rowFor(t, st)]);
+$('opentasks').replaceChildren(...rows(open));
+$('donelist').replaceChildren(...rows(done));
+$('empty').hidden = open.length + done.length > 0;
+$('donedivider').hidden = done.length === 0;
+$('donedivider').textContent = 'Done · ' + done.length;
+const tc = $('todocount');
+if (open.length + done.length === 0) tc.hidden = true;
+else {
+tc.hidden = false;
+tc.textContent = open.length ? open.length + ' to do' : 'all done ✓';
+tc.classList.toggle('zero', open.length === 0);
+}
+if (wasFocused) {
+const i = document.getElementById('cmt-input');
+if (i) { i.focus(); const l = i.value.length; i.setSelectionRange(l, l); }
+}
+}
+const input = $('newtask');
+function submitNew() {
+const v = input.value;
+input.value = '';
+if (v.trim()) addTask(v);
+input.focus();
+}
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitNew(); } });
+$('addbtn').onclick = submitNew;
+$('activehead').onclick = () => {
+const body = $('activebody');
+body.hidden = !body.hidden;
+};
+$('titlename').onclick = (e) => {
+e.stopPropagation();
+if (ownerPk() === ME) askProfileName();
+else openAboutModal();
+};
+$('listname').onclick = (e) => {
+e.stopPropagation();
+askText({
+title: 'Name this tasklist',
+hint: 'Everyone on this tasklist sees the same name.',
+value: listMeta.name || '',
+placeholder: 'e.g. groceries, launch plan, chores…',
+saveLabel: 'Save',
+maxlength: 48,
+}, async (v) => { if (v.trim()) await setListName(v); });
+};
+$('sharebtn').onclick = (e) => { e.stopPropagation(); openShareModal(); };
+$('aboutlink').onclick = openAboutModal;
+$('footname').onclick = () => askProfileName();
+$('newlistbtn').onclick = () => { location.hash = '#' + randomListId(); };
+renderStack();
+for (const evt of cacheEvents) processEvent(evt, true);
+for (const id in pending) processEvent(pending[id], true);
+render();
+relays.forEach(connect);
+connUI();
+setInterval(() => relays.forEach((r) => { if (r.status === 'closed' && !r._t) connect(r); }), 15000);
+window.addEventListener('online', () => relays.forEach(connect));
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+input.focus();
+window.__TL = { listId, ME, tasks, actions, comments, taskState, addTask, act, relays, names,
+setProfileName, setListName, get myName() { return myName; }, get owner() { return ownerPk(); },
+nsec: () => C.nsecEncode(sk), npub: () => C.npubEncode(ME) };
+})();
+</script>
+</body>
+</html>
