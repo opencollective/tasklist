@@ -219,6 +219,8 @@ border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
 overflow-wrap: anywhere; margin-bottom: 14px; user-select: all;
 }
 .about-key { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.keybtn { background: transparent; border: 0; padding: 2px; cursor: pointer; color: var(--accent); display: inline-flex; vertical-align: middle; }
+.keybtn:hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -1108,26 +1110,45 @@ el('div', { class: 'urlline', id: 'shareurl' }, url),
 el('div', { class: 'modal-actions' }, ...buttons)
 );
 }
-function openAboutModal() {
-const keyLine = el('p', { class: 'about-key' }, 'Identity: ' + C.npubEncode(ME).slice(0, 20) + '…');
-let revealed = false;
-const revealBtn = el('button', { class: 'btn subtle', onclick: () => {
-if (!revealed) {
-revealed = true;
-keyLine.textContent = 'Secret key (keep private): ' + C.nsecEncode(sk);
-revealBtn.textContent = 'Copy secret key';
-} else {
-navigator.clipboard.writeText(C.nsecEncode(sk)).then(() => toast('Secret key copied'));
+const ICON_COPY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_EYE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const ICON_EYE_OFF = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function keyBtn(svg, label, onclick) {
+const b = el('button', { class: 'keybtn', title: label, 'aria-label': label, onclick });
+b.innerHTML = svg;
+return b;
 }
-} }, 'Backup identity');
+function copyText(txt, msg) {
+navigator.clipboard.writeText(txt).then(() => toast(msg)).catch(() => prompt('Copy:', txt));
+}
+function openAboutModal() {
+const npub = C.npubEncode(ME), nsec = C.nsecEncode(sk);
+const MASK = 'nsec1' + '•'.repeat(20);
+const npubLine = el('p', { class: 'about-key', id: 'npubline' },
+el('span', {}, 'Identity: ' + npub.slice(0, 14) + '…' + npub.slice(-6) + ' '),
+keyBtn(ICON_COPY, 'Copy identity (npub)', () => copyText(npub, 'Identity (npub) copied')));
+let revealed = false;
+const nsecSpan = el('span', { id: 'nsectext' }, 'Secret key (keep private): ' + MASK + ' ');
+const eye = keyBtn(ICON_EYE, 'Reveal secret key', () => {
+revealed = !revealed;
+nsecSpan.textContent = 'Secret key (keep private): ' + (revealed ? nsec : MASK) + ' ';
+eye.innerHTML = revealed ? ICON_EYE_OFF : ICON_EYE;
+const label = revealed ? 'Hide secret key' : 'Reveal secret key';
+eye.title = label;
+eye.setAttribute('aria-label', label);
+});
+eye.id = 'nsecreveal';
+const nsecLine = el('p', { class: 'about-key', id: 'nsecline' }, nsecSpan,
+keyBtn(ICON_COPY, 'Copy secret key (nsec)', () => copyText(nsec, 'Secret key copied — keep it private')), ' ', eye);
 openModal(
 el('h2', {}, '✓ tasklist'),
 el('p', {}, 'Instant shared task lists. Type tasks, share the link, and coordinate in real time — grab a task, discuss it, check it off.'),
 el('p', {}, 'No accounts and no server of its own: everything is signed with a key created in this browser and synced through public relays. Clearing site data deletes that key, and this list is only as permanent as the relays that carry it.'),
 el('p', { id: 'aboutme' }, 'You appear as ', el('b', {}, myName || 'Anon'), ' ',
 el('button', { class: 'btn subtle small', id: 'aboutrename', onclick: () => { closeModal(); askProfileName(); } }, 'Change name')),
-keyLine,
-el('div', { class: 'modal-actions' }, revealBtn,
+npubLine,
+nsecLine,
+el('div', { class: 'modal-actions' },
 el('button', { class: 'btn', onclick: closeModal }, 'Close'))
 );
 }
