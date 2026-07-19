@@ -210,6 +210,22 @@ background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
 padding: 11px 13px; outline: none; margin-bottom: 14px;
 }
 #modal input[type=text]:focus { border-color: var(--accent); }
+#modal textarea {
+width: 100%; font: inherit; font-size: 16px; color: var(--text);
+background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+padding: 11px 13px; outline: none; margin-bottom: 14px; resize: vertical;
+}
+#modal textarea:focus { border-color: var(--accent); }
+.menu { margin: 4px 0 6px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.menuitem {
+display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px;
+padding: 13px 14px; background: var(--bg); border: 0; border-bottom: 1px solid var(--line);
+font: inherit; font-weight: 600; color: var(--text); cursor: pointer; text-align: left;
+}
+.menuitem:last-child { border-bottom: 0; }
+.menuitem:hover { background: var(--accent-soft); }
+.menuitem .sub { color: var(--muted); font-weight: 400; white-space: pre; }
+.sect { margin: 18px 0 2px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .qrbox { display: flex; justify-content: center; margin: 4px 0 14px; }
 .qrbox svg { border-radius: 12px; border: 1px solid var(--line); }
@@ -256,7 +272,7 @@ overflow-wrap: anywhere; margin-bottom: 14px; user-select: all;
 <footer>
 <div class="foot-inner">
 <span class="conn" id="conn" title="Changes are saved on this device and sync when connected."><span class="dot" id="conndot"></span><span>connected as</span><span class="editable" id="footname" title="Change your name">Anon</span><span id="conntxt">to 0 relays</span></span>
-<span id="aboutlink">About tasklist</span>
+<span id="aboutlink">Settings</span>
 </div>
 </footer>
 <div id="toast"></div>
@@ -1088,7 +1104,9 @@ setTimeout(() => { input.focus(); input.select(); }, 50);
 }
 function openShareModal() {
 const url = location.href;
-const label = listMeta.name || 'this tasklist';
+const label = listMeta.name || 'tasklist';
+const owner = ownerPk();
+const ownerName = owner === ME ? (myName || 'Anon') : nameOf(owner);
 const box = el('div', { class: 'qrbox' });
 const svg = window.QR.qrSvg(url, 216);
 if (svg) box.innerHTML = svg;
@@ -1104,7 +1122,7 @@ catch { prompt('Copy this link:', url); }
 } }, 'Copy link'));
 openModal(
 el('h2', {}, 'Share “' + label + '”'),
-el('p', {}, 'This link shares only this one tasklist — your other tasklists stay private. Anyone who opens it can add tasks, grab one, and check it off, live.'),
+el('p', {}, 'Anyone with this link can add tasks, grab one, and check it off — live. It will show up as “' + ownerName + '’s ' + label + '” in their list of tasklists.'),
 box,
 el('div', { class: 'urlline', id: 'shareurl' }, url),
 el('div', { class: 'modal-actions' }, ...buttons)
@@ -1121,7 +1139,46 @@ return b;
 function copyText(txt, msg) {
 navigator.clipboard.writeText(txt).then(() => toast(msg)).catch(() => prompt('Copy:', txt));
 }
-function openAboutModal() {
+function openSettingsModal() {
+openModal(
+el('h2', {}, 'Settings'),
+el('p', { id: 'aboutme' }, 'You appear as ', el('b', {}, myName || 'Anon'), ' ',
+el('button', { class: 'btn subtle small', id: 'aboutrename', onclick: () => { closeModal(); askProfileName(); } }, 'Change name')),
+el('div', { class: 'menu' },
+el('button', { class: 'menuitem', id: 'menurelays', onclick: openRelaysModal },
+el('span', {}, 'Relays'),
+el('span', { class: 'sub' }, relayUrls.length + '  ›')),
+el('button', { class: 'menuitem', id: 'menuidentity', onclick: openIdentityModal },
+el('span', {}, 'Identity'),
+el('span', { class: 'sub' }, '›'))),
+el('div', { class: 'sect' }, 'About'),
+el('p', {}, 'tasklist — instant shared task lists. Type tasks, share the link, and coordinate in real time: grab a task, discuss it, check it off. No accounts and no server of its own — everything is signed with a key created in this browser.'),
+el('p', {}, 'tasklist uses a decentralized network of public relays. Don’t share sensitive information unless you control the relays that you are using tasklist with.'),
+el('div', { class: 'modal-actions' },
+el('button', { class: 'btn', onclick: closeModal }, 'Close'))
+);
+}
+function openRelaysModal() {
+const ta = el('textarea', { id: 'relaysinput', rows: 5, spellcheck: 'false', autocomplete: 'off' });
+ta.value = relayUrls.join('\n');
+openModal(
+el('h2', {}, 'Relays'),
+el('p', {}, 'Your tasklists sync through these relays — one wss:// URL per line. People on a shared tasklist need at least one relay in common to see each other.'),
+ta,
+el('div', { class: 'modal-actions' },
+el('button', { class: 'btn subtle', onclick: openSettingsModal }, 'Back'),
+el('button', { class: 'btn', id: 'relaysave', onclick: () => {
+const urls = ta.value.split('\n').map((s) => s.trim()).filter(Boolean);
+if (!urls.length || urls.length > 10 || !urls.every((u) => /^wss?:\/\/\S+$/i.test(u))) {
+toast('Enter 1–10 relay URLs (wss://…), one per line');
+return;
+}
+try { localStorage.setItem(LS.relays, JSON.stringify(urls)); } catch {}
+location.reload();
+} }, 'Save & reconnect'))
+);
+}
+function openIdentityModal() {
 const npub = C.npubEncode(ME), nsec = C.nsecEncode(sk);
 const MASK = 'nsec1' + '•'.repeat(20);
 const npubLine = el('p', { class: 'about-key', id: 'npubline' },
@@ -1141,14 +1198,12 @@ eye.id = 'nsecreveal';
 const nsecLine = el('p', { class: 'about-key', id: 'nsecline' }, nsecSpan,
 keyBtn(ICON_COPY, 'Copy secret key (nsec)', () => copyText(nsec, 'Secret key copied — keep it private')), ' ', eye);
 openModal(
-el('h2', {}, '✓ tasklist'),
-el('p', {}, 'Instant shared task lists. Type tasks, share the link, and coordinate in real time — grab a task, discuss it, check it off.'),
-el('p', {}, 'No accounts and no server of its own: everything is signed with a key created in this browser and synced through public relays. Clearing site data deletes that key, and this list is only as permanent as the relays that carry it.'),
-el('p', { id: 'aboutme' }, 'You appear as ', el('b', {}, myName || 'Anon'), ' ',
-el('button', { class: 'btn subtle small', id: 'aboutrename', onclick: () => { closeModal(); askProfileName(); } }, 'Change name')),
+el('h2', {}, 'Identity'),
+el('p', {}, 'Your identity is a keypair created in this browser. Back up the secret key to keep your name and tasks if you clear site data or switch devices — clearing site data deletes it.'),
 npubLine,
 nsecLine,
 el('div', { class: 'modal-actions' },
+el('button', { class: 'btn subtle', onclick: openSettingsModal }, 'Back'),
 el('button', { class: 'btn', onclick: closeModal }, 'Close'))
 );
 }
@@ -1457,7 +1512,7 @@ body.hidden = !body.hidden;
 $('titlename').onclick = (e) => {
 e.stopPropagation();
 if (ownerPk() === ME) askProfileName();
-else openAboutModal();
+else openSettingsModal();
 };
 $('listname').onclick = (e) => {
 e.stopPropagation();
@@ -1471,7 +1526,7 @@ maxlength: 48,
 }, async (v) => { if (v.trim()) await setListName(v); });
 };
 $('sharebtn').onclick = (e) => { e.stopPropagation(); openShareModal(); };
-$('aboutlink').onclick = openAboutModal;
+$('aboutlink').onclick = openSettingsModal;
 $('footname').onclick = () => askProfileName();
 $('newlistbtn').onclick = () => { location.hash = '#' + randomListId(); };
 renderStack();
