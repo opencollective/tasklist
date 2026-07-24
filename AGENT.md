@@ -123,11 +123,12 @@ pubkeys appear in the list; it is re-issued (debounced) on growth.
 
 - Bare URL → replaceState to a fresh `#listId`. Hash change → full reload.
 - New-task input: always focused, Enter adds and keeps focus. Never steal its focus.
-- **The circle is the only thing that completes a task.** Tapping the row toggles the
-  inline thread. Circle on a task that isn't yours doesn't complete — it opens the
-  thread, where "Assign to me" / "Take over this task" lives. Dashed circle = not yours
-  yet. Claims, dones, reopens, and creation all appear in the thread as system entries
-  interleaved chronologically with comments, so the thread is the task's full history.
+- **The circle is the only thing that completes a task, and it works for anyone in one
+  tap** — no claim required first. Tapping the row toggles the inline thread, where
+  "I'll take this one" / "Take over this task" lets someone optionally signal they plan
+  to do a task. Dashed circle = unassigned. Claims, dones, reopens, and creation all
+  appear in the thread as system entries interleaved chronologically with comments, so
+  the thread is the task's full history.
 - Name prompt appears at most once, on first claim/comment, skippable.
 - Title bar: `{owner}'s {listname}` — owner name editable only by the owner (opens
   profile-name modal, publishes kind 0); list name editable by anyone (kind 2102).

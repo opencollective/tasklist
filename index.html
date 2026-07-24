@@ -1232,13 +1232,9 @@ const st = taskState(t);
 if (st.done) {
 act(t.id, 'undone');
 toast('Marked as not done');
-} else if (st.assignee === ME || (st.assignee === null && t.creator === ME)) {
+} else {
 act(t.id, 'done');
 toast('Done ✓');
-} else {
-expandedId = t.id;
-scheduleRender();
-toast('Assign this task to yourself first');
 }
 }
 function toggleExpand(t) {
@@ -1305,12 +1301,12 @@ bubble.appendChild(el('a', { class: 'filechip', href: en.att.url, target: '_blan
 wrap.appendChild(el('div', { class: 'entry' }, avatar(en.pubkey), bubble));
 }
 }
-if (!st.done && st.assignee !== ME && !(st.assignee === null && t.creator === ME)) {
+if (!st.done && st.assignee !== ME) {
 wrap.appendChild(el('div', { class: 'assignbar' },
 el('button', { class: 'btn small', id: 'assignbtn', onclick: () => claimTask(t) },
-st.assignee ? 'Take over this task' : 'Assign to me'),
+st.assignee ? 'Take over this task' : "I'll take this one"),
 el('span', { class: 'assignhint' },
-st.assignee ? 'Currently with ' + nameOf(st.assignee) + '.' : 'Grab it before checking it off.')));
+st.assignee ? 'Currently with ' + nameOf(st.assignee) + '.' : 'Let everyone know you plan to do it.')));
 }
 const fi = el('input', { type: 'file', class: 'hiddenfile' });
 fi.onchange = () => { pendingFiles.set(t.id, fi.files[0] || null); scheduleRender(); };
@@ -1335,7 +1331,7 @@ function rowFor(t, st) {
 const row = document.createElement('div');
 row.className = 'task' + (st.done ? ' done' : '') +
 (st.assignee === ME ? ' mine' : st.assignee ? ' claimed' : '') +
-(!st.done && st.assignee !== ME && !(st.assignee === null && t.creator === ME) ? ' grab' : '');
+(!st.done && !st.assignee ? ' grab' : '');
 row.dataset.id = t.id;
 const check = el('div', { class: 'check', title: st.done ? 'Mark as not done' : 'Mark as done', onclick: (e) => {
 e.stopPropagation();
