@@ -137,14 +137,14 @@ font-size: 17px; cursor: pointer; padding: 4px 6px; border-radius: 8px; opacity:
 .entry .who { font-weight: 700; }
 .entry .when { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .bubble { background: var(--card); border: 1px solid var(--line); border-radius: 4px 12px 12px 12px; padding: 7px 11px; overflow-wrap: anywhere; min-width: 0; }
-.bubble .cmt-text { margin-top: 2px; }
+.bubble .cmt-text { margin-top: 2px; white-space: pre-wrap; }
 .bubble img { max-width: 100%; max-height: 220px; border-radius: 8px; display: block; margin-top: 6px; }
 .filechip { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--accent); text-decoration: none; background: var(--accent-soft); border-radius: 8px; padding: 5px 10px; }
 .assignbar { margin: 12px 0 2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .assignhint { font-size: 12.5px; color: var(--muted); }
-.cmtrow { display: flex; gap: 6px; margin-top: 12px; align-items: center; }
-.cmtrow input[type=text] { flex: 1; font: inherit; font-size: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 13px; outline: none; color: var(--text); min-width: 0; }
-.cmtrow input[type=text]:focus { border-color: var(--accent); }
+.cmtrow { display: flex; gap: 6px; margin-top: 12px; align-items: flex-end; }
+.cmtrow textarea { flex: 1; font: inherit; font-size: 16px; line-height: 1.4; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 8px 13px; outline: none; color: var(--text); min-width: 0; resize: none; overflow-y: auto; max-height: 132px; }
+.cmtrow textarea:focus { border-color: var(--accent); }
 .iconbtn { background: var(--card); border: 1px solid var(--line); border-radius: 50%; width: 34px; height: 34px; cursor: pointer; font-size: 15px; flex: none; color: var(--text); }
 #sharebtn { display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
 #sharebtn:active { transform: scale(.94); }
@@ -1278,6 +1278,10 @@ list.push({ at: c.created_at, id: c.id, pubkey: c.pubkey, text: c.text, att: c.a
 }
 return list.sort((x, y) => x.at - y.at || (x.id < y.id ? -1 : 1));
 }
+function autosize(ta) {
+ta.style.height = 'auto';
+ta.style.height = (ta.scrollHeight + ta.offsetHeight - ta.clientHeight) + 'px';
+}
 function buildThread(t, st) {
 const wrap = el('div', { class: 'thread', onclick: (e) => e.stopPropagation() });
 for (const en of threadEntries(t)) {
@@ -1310,10 +1314,10 @@ st.assignee ? 'Currently with ' + nameOf(st.assignee) + '.' : 'Let everyone know
 }
 const fi = el('input', { type: 'file', class: 'hiddenfile' });
 fi.onchange = () => { pendingFiles.set(t.id, fi.files[0] || null); scheduleRender(); };
-const inp = el('input', { type: 'text', id: 'cmt-input', placeholder: 'Add a comment…', maxlength: 2000, autocomplete: 'off' });
+const inp = el('textarea', { id: 'cmt-input', rows: 1, placeholder: 'Add a comment…', maxlength: 2000, autocomplete: 'off', enterkeyhint: 'send' });
 inp.value = drafts.get(t.id) || '';
-inp.oninput = () => drafts.set(t.id, inp.value);
-inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendComment(t); } };
+inp.oninput = () => { drafts.set(t.id, inp.value); autosize(inp); };
+inp.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(t); } };
 const isUp = uploading.has(t.id);
 wrap.appendChild(el('div', { class: 'cmtrow' },
 el('button', { class: 'iconbtn', title: 'Attach an image or file', onclick: () => fi.click() }, '📎'),
@@ -1491,6 +1495,8 @@ if (wasFocused) {
 const i = document.getElementById('cmt-input');
 if (i) { i.focus(); const l = i.value.length; i.setSelectionRange(l, l); }
 }
+const ci = document.getElementById('cmt-input');
+if (ci) autosize(ci);
 }
 const input = $('newtask');
 function submitNew() {
