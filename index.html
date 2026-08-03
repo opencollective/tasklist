@@ -113,6 +113,7 @@ font-size: 15px; color: #fff; transition: all .15s;
 .task.mine .check, .task.claimed .check { border-color: var(--accent); }
 .task.done .check { border-color: var(--done); background: var(--done); }
 .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.lnk { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .task.done .title { color: var(--muted); text-decoration: line-through; }
 .chip {
 flex: none; display: inline-flex; align-items: center; gap: 5px;
@@ -1073,6 +1074,45 @@ else n.setAttribute(k, attrs[k]);
 for (const c of children) n.append(c);
 return n;
 }
+/* Shorten a URL for display: drop the scheme and www., keep the host and the first
+   path segment, elide the rest. The full URL stays in the title attribute. */
+function shortUrl(u) {
+let p;
+try { p = new URL(u); } catch (e) { return u; }
+const host = p.hostname.replace(/^www\./i, '');
+const segs = p.pathname.split('/').filter(Boolean);
+if (!segs.length) return host + (p.search || p.hash ? '/…' : '');
+let out = host + '/' + (segs[0].length > 24 ? segs[0].slice(0, 24) + '…' : segs[0]);
+if (segs.length > 1 || p.search || p.hash) out += '/…';
+return out;
+}
+/* Turn bare http(s) URLs inside plain text into links. Returns a DocumentFragment so
+   callers keep using textContent-only insertion for everything else (XSS-proof). */
+const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/gi;
+function linkify(text) {
+const frag = document.createDocumentFragment();
+let last = 0, m;
+URL_RE.lastIndex = 0;
+while ((m = URL_RE.exec(text))) {
+let url = m[0];
+/* Trailing punctuation is almost always sentence punctuation, not part of the URL —
+   except a ')' that closes a '(' opened inside the URL itself. */
+while (url.length) {
+const c = url[url.length - 1];
+if ('.,;:!?"\''.includes(c)) { url = url.slice(0, -1); continue; }
+if (c === ')' && url.split(')').length > url.split('(').length) { url = url.slice(0, -1); continue; }
+break;
+}
+if (!url) { last = m.index + m[0].length; continue; }
+if (m.index > last) frag.append(text.slice(last, m.index));
+frag.append(el('a', { class: 'lnk', href: url, target: '_blank', rel: 'noopener noreferrer',
+title: url, onclick: (e) => e.stopPropagation() }, shortUrl(url)));
+last = m.index + url.length;
+URL_RE.lastIndex = last;
+}
+if (last < text.length) frag.append(text.slice(last));
+return frag;
+}
 function avatar(pk, cls) {
 const a = el('span', { class: 'avatar' + (cls ? ' ' + cls : '') });
 a.style.background = colorFor(pk);
@@ -1296,7 +1336,7 @@ el('span', { class: 'when' }, relTime(en.at))));
 } else {
 const bubble = el('div', { class: 'bubble' },
 el('span', { class: 'who' }, who), ' ', el('span', { class: 'when' }, relTime(en.at)));
-if (en.text) bubble.appendChild(el('div', { class: 'cmt-text' }, en.text));
+if (en.text) bubble.appendChild(el('div', { class: 'cmt-text' }, linkify(en.text)));
 if (en.att) {
 if (en.att.mime.startsWith('image/')) {
 bubble.appendChild(el('a', { class: 'imglink', href: en.att.url, target: '_blank', rel: 'noopener', title: 'Open ' + en.att.name },
@@ -1344,7 +1384,7 @@ const check = el('div', { class: 'check', title: st.done ? 'Mark as not done' : 
 e.stopPropagation();
 circleTap(t);
 } }, st.done ? '✓' : '');
-const title = el('div', { class: 'title' }, t.title);
+const title = el('div', { class: 'title' }, linkify(t.title));
 row.append(check, title);
 const nComments = (comments.get(t.id) || []).length;
 if (nComments) row.appendChild(el('span', { class: 'chip', title: 'comments' }, '💬 ' + nComments));

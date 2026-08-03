@@ -138,7 +138,11 @@ pubkeys appear in the list; it is re-issued (debounced) on growth.
   stateful widget (comment drafts, pending attachments, focus) must survive a rebuild —
   see `drafts`, `pendingFiles`, and the `cmt-input` focus-restore pattern in `render()`.
 - All user content is inserted via `textContent`/`el()` helper — never innerHTML with
-  user data. Keep it XSS-proof.
+  user data. Keep it XSS-proof. `linkify()` is the one exception that builds elements
+  from user text: it only ever matches `https?://…` (so the href scheme can't be
+  attacked) and everything around a match stays a text node. Links display shortened
+  (`shortUrl()`: no scheme/www, host + first path segment, rest elided) with the full
+  URL in `title`.
 
 ## How to add a feature (the pattern)
 
