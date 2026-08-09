@@ -785,9 +785,21 @@ const b = new Uint8Array(8);
 crypto.getRandomValues(b);
 return C.bytesToHex(b);
 }
+/* Tasklists opened on this device: [{id, lastOpened}]. Lists with nothing cached are
+   dropped — an id alone (a list that was opened but never used) is not worth a card. */
+function storedLists() {
+return (loadJSON(LS.lists, []) || []).filter((l) =>
+l && typeof l.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(l.id));
+}
+function usedLists() {
+return storedLists().filter((l) => loadJSON(LS.cache(l.id), []).length > 0);
+}
 let listId = (location.hash || '').replace(/^#\/?/, '').replace(/[^a-zA-Z0-9_-]/g, '');
 if (!listId) {
-listId = randomListId();
+/* Bare URL: reopen the tasklist last used on this device. Minting a fresh id here
+   would put an empty ghost card on top of the stack next to the real lists. */
+const prev = usedLists().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0))[0];
+listId = prev ? prev.id : randomListId();
 history.replaceState(null, '', '#' + listId);
 }
 window.addEventListener('hashchange', () => location.reload());
@@ -809,10 +821,8 @@ try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return
 }
 let cacheEvents = loadJSON(LS.cache(listId), []);
 let pending = loadJSON(LS.pending(listId), {});
-// Registry of tasklists opened on this device: [{id, lastOpened}]
-let knownLists = (loadJSON(LS.lists, []) || []).filter((l) =>
-l && typeof l.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(l.id) &&
-(l.id === listId || loadJSON(LS.cache(l.id), []).length > 0));
+let knownLists = storedLists().filter((l) =>
+l.id === listId || loadJSON(LS.cache(l.id), []).length > 0);
 // Stack order is stable: existing entries never move; new lists go on top.
 {
 const cur = knownLists.find((l) => l.id === listId);
