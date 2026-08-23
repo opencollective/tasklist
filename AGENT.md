@@ -161,11 +161,20 @@ sign and publish the same kinds listed above. Rules:
 - Per-Telegram-user identity: sk = HMAC(`TASKLIST_MASTER_SECRET`, `tg-user:<id>`)
   mod n (`_lib/bot.mjs`). Losing the master secret orphans every Telegram identity;
   leaking it lets anyone sign as them. It lives only in Vercel env.
-- KV state: `chat:{chatId}` link, `chats` set, `cursor:{chatId}` + `seen:{chatId}`
-  (notification dedupe; a chat's own publishes are pre-seeded so it never gets its
-  own actions echoed back), `msg:{chatId}:{messageId}` → taskId (reply-to-comment
-  and ✓ buttons; callback_data carries a 16-char event-id prefix, resolved against
-  a fresh relay fetch).
+- Scopes: every chat gets its own current list, keyed by chatKey = chat id, plus
+  `:<threadId>` inside a forum topic (topics are independent lists). Lists are
+  auto-created on first /task — never make the user run a setup command first.
+  Group-scoped lists are auto-named after the chat title.
+- KV state: `chat:{chatKey}` link `{listId, chatId, threadId}`, `chats` set,
+  `cursor:{chatKey}` + `seen:{chatKey}` (notification dedupe; a scope's own
+  publishes are pre-seeded so it never gets its own actions echoed back),
+  `msg:{chatId}:{messageId}` → taskId (reply-to-comment and buttons;
+  callback_data carries a 16-char event-id prefix, resolved against a fresh relay
+  fetch), `byname:{chatKey}:{slug}` → listId (/tasklist name switching).
+- Task messages — from Telegram actions and from cron notifications alike — carry
+  ✓ Done plus "I'll take it" while unassigned; claim state is re-checked on tap.
+- Command surface: /task, /tasks, /tasklist [name|url], /unlink, /help
+  (/add, /list, /newlist, /link kept as hidden aliases).
 - Webhook auth = Telegram `secret_token` header; cron auth = Vercel `CRON_SECRET`
   bearer. Always answer the webhook 200 (Telegram retry-storms otherwise).
 - Test: `node <scratch>/bot-e2e.mjs` style — mock Telegram API captures sends, mem

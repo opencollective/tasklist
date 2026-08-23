@@ -1,14 +1,27 @@
-/* Notification poller, run by Vercel Cron every minute. For every linked chat,
-   fetch the list's events from the relays and push anything new into the chat.
-   Events published *from* a chat are in seen:{chatId} and are not echoed back. */
+/* Notification poller, run by Vercel Cron every minute. For every linked chat scope
+   (chat, group, channel, or forum topic), fetch the list's events from the relays and
+   push anything new into it. Events published *from* a scope are in seen:{chatKey}
+   and are not echoed back. */
 
 import { tg, send, esc } from './_lib/tg.mjs';
 import { fetchEvents } from './_lib/nostr.mjs';
-import { foldList, nameOf, tagVal, LIST_KINDS, KIND_TASK, KIND_ACTION, KIND_META, KIND_COMMENT } from './_lib/state.mjs';
+import { foldList, taskState, nameOf, tagVal, LIST_KINDS, KIND_TASK, KIND_ACTION, KIND_META, KIND_COMMENT } from './_lib/state.mjs';
 import { kv, kvPipeline } from './_lib/kv.mjs';
 import * as bot from './_lib/bot.mjs';
 
 const MAX_PER_RUN = 15; // stay well under Telegram's ~20 msg/min per chat
+
+/* Same buttons a task gets when added from Telegram: complete in one tap, and claim
+   it while nobody has it. State is as of this fold — the buttons re-check on tap. */
+function taskButtons(fold, taskId) {
+  const t = fold.tasks.get(taskId);
+  if (!t) return undefined;
+  const st = taskState(fold, t);
+  if (st.done || st.deleted) return undefined;
+  const row = [{ text: '✓ Done', callback_data: 'd:' + taskId.slice(0, 16) }];
+  if (!st.assignee) row.push({ text: "👋 I'll take it", callback_data: 'c:' + taskId.slice(0, 16) });
+  return { inline_keyboard: [row] };
+}
 
 function describe(fold, evt) {
   const who = esc(nameOf(fold, evt.pubkey));
@@ -42,36 +55,38 @@ function describe(fold, evt) {
   return null;
 }
 
-async function notifyChat(chatId, listId, fold, events) {
-  const cursor = parseInt(await kv('GET', 'cursor:' + chatId), 10) || 0;
+async function notifyChat(chatKey, link, fold, events) {
+  const chatId = link.chatId ?? String(chatKey).split(':')[0];
+  const cursor = parseInt(await kv('GET', 'cursor:' + chatKey), 10) || 0;
   const fresh = events
     .filter((e) => e.created_at > cursor - 900) // clock-skew buffer; seen-set dedupes
     .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
   if (!fresh.length) return 0;
-  const seenChecks = await kvPipeline(fresh.map((e) => ['SISMEMBER', 'seen:' + chatId, e.id]));
+  const seenChecks = await kvPipeline(fresh.map((e) => ['SISMEMBER', 'seen:' + chatKey, e.id]));
   let sent = 0, lastAt = cursor;
   for (let i = 0; i < fresh.length; i++) {
     const evt = fresh[i];
     if (seenChecks[i]) { lastAt = Math.max(lastAt, evt.created_at); continue; }
     const d = describe(fold, evt);
-    await kvPipeline([['SADD', 'seen:' + chatId, evt.id], ['EXPIRE', 'seen:' + chatId, 7 * 86400]]);
+    await kvPipeline([['SADD', 'seen:' + chatKey, evt.id], ['EXPIRE', 'seen:' + chatKey, 7 * 86400]]);
     lastAt = Math.max(lastAt, evt.created_at);
     if (d) {
       const extra = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
-      if (d.button && d.taskId) extra.reply_markup = { inline_keyboard: [[{ text: '✓ Done', callback_data: 'd:' + d.taskId.slice(0, 16) }]] };
+      if (link.threadId) extra.message_thread_id = link.threadId;
+      if (d.button && d.taskId) extra.reply_markup = taskButtons(fold, d.taskId);
       try {
         const m = await send(chatId, d.text, extra);
         if (d.taskId) await bot.rememberTaskMsg(chatId, m.message_id, d.taskId);
         sent++;
       } catch (err) {
         // 403 = bot kicked from the chat: stop notifying it
-        if (/forbidden|kicked|blocked/i.test(err.message)) { await bot.unlinkChat(chatId); return sent; }
-        console.error('notify', chatId, err.message);
+        if (/forbidden|kicked|blocked/i.test(err.message)) { await bot.unlinkChat(chatKey); return sent; }
+        console.error('notify', chatKey, err.message);
       }
       if (sent >= MAX_PER_RUN) break;
     }
   }
-  await kv('SET', 'cursor:' + chatId, String(lastAt));
+  await kv('SET', 'cursor:' + chatKey, String(lastAt));
   return sent;
 }
 
@@ -80,21 +95,21 @@ export default async function handler(req, res) {
   if (process.env.CRON_SECRET && auth !== 'Bearer ' + process.env.CRON_SECRET) {
     res.status(401).send('unauthorized'); return;
   }
-  const chats = await bot.allChats();
-  const links = await Promise.all(chats.map(async (c) => ({ chatId: c, link: await bot.chatLink(c) })));
+  const chatKeys = await bot.allChats();
+  const links = await Promise.all(chatKeys.map(async (k) => ({ chatKey: k, link: await bot.chatLink(k) })));
   const byList = new Map();
-  for (const { chatId, link } of links) {
+  for (const { chatKey, link } of links) {
     if (!link) continue;
     if (!byList.has(link.listId)) byList.set(link.listId, []);
-    byList.get(link.listId).push(chatId);
+    byList.get(link.listId).push({ chatKey, link });
   }
   let total = 0;
-  for (const [listId, chatIds] of byList) {
+  for (const [listId, targets] of byList) {
     let events;
     try { events = await fetchEvents({ kinds: LIST_KINDS, '#t': [listId], limit: 500 }); }
     catch (err) { console.error('fetch', listId, err.message); continue; }
     const fold = foldList(listId, events);
-    for (const chatId of chatIds) total += await notifyChat(chatId, listId, fold, events);
+    for (const { chatKey, link } of targets) total += await notifyChat(chatKey, link, fold, events);
   }
-  res.status(200).json({ ok: true, chats: chats.length, lists: byList.size, sent: total });
+  res.status(200).json({ ok: true, chats: chatKeys.length, lists: byList.size, sent: total });
 }

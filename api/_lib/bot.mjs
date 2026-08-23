@@ -47,7 +47,7 @@ async function nextTs(listId) {
 /* Sign + publish one list event as a Telegram user. Also (once per name change)
    publishes their kind 0 profile so web clients resolve the name. Records the event
    id in seen:{chatId} so the notifier doesn't echo a chat's own actions back at it. */
-export async function publishAs(tgUser, chatId, listId, { kind, content = '', tags = [] }) {
+export async function publishAs(tgUser, chatKey, listId, { kind, content = '', tags = [] }) {
   const { sk } = userKey(tgUser.id);
   const name = displayName(tgUser);
   const ts = await nextTs(listId);
@@ -65,8 +65,8 @@ export async function publishAs(tgUser, chatId, listId, { kind, content = '', ta
   const { acked } = await publish(toSend);
   if (!acked.has(evt.id)) throw new Error('no relay accepted the event');
   await kvPipeline([
-    ['SADD', 'seen:' + chatId, evt.id],
-    ['EXPIRE', 'seen:' + chatId, 7 * 86400],
+    ['SADD', 'seen:' + chatKey, evt.id],
+    ['EXPIRE', 'seen:' + chatKey, 7 * 86400],
   ]);
   return evt;
 }
@@ -80,22 +80,36 @@ export const comment = (u, chat, list, taskId, text) =>
 export const setListName = (u, chat, list, name) =>
   publishAs(u, chat, list, { kind: KIND_META, content: name.slice(0, 48) });
 
-/* --- chat ↔ list link registry --- */
+/* --- chat ↔ list link registry ---
+   A "chat" here is a chatKey: the Telegram chat id, plus ':<threadId>' inside a forum
+   topic — every group, channel, private chat, and topic gets its own current list. */
 
-export async function linkChat(chatId, listId) {
+export async function linkChat(chatKey, { listId, chatId, threadId }) {
   await kvPipeline([
-    ['SET', 'chat:' + chatId, JSON.stringify({ listId, linkedAt: Date.now() })],
-    ['SADD', 'chats', String(chatId)],
-    ['SET', 'cursor:' + chatId, String(Math.floor(Date.now() / 1000))],
+    ['SET', 'chat:' + chatKey, JSON.stringify({ listId, chatId, threadId, linkedAt: Date.now() })],
+    ['SADD', 'chats', String(chatKey)],
+    ['SET', 'cursor:' + chatKey, String(Math.floor(Date.now() / 1000))],
   ]);
 }
 
-export async function unlinkChat(chatId) {
-  await kvPipeline([['DEL', 'chat:' + chatId], ['SREM', 'chats', String(chatId)], ['DEL', 'cursor:' + chatId]]);
+export async function unlinkChat(chatKey) {
+  await kvPipeline([['DEL', 'chat:' + chatKey], ['SREM', 'chats', String(chatKey)], ['DEL', 'cursor:' + chatKey]]);
 }
 
-export const chatLink = (chatId) => kvGetJSON('chat:' + chatId, null);
+export const chatLink = (chatKey) => kvGetJSON('chat:' + chatKey, null);
 export const allChats = () => kv('SMEMBERS', 'chats');
+
+/* Per-chat name → listId registry so "/tasklist groceries" can switch back to a list
+   this chat has used before. Names are matched case-insensitively. */
+const slug = (name) => String(name || '').trim().toLowerCase().slice(0, 48);
+
+export async function rememberList(chatKey, listId, name) {
+  const cmds = [['SET', 'known:' + chatKey + ':' + listId, name || '']];
+  if (slug(name)) cmds.push(['SET', 'byname:' + chatKey + ':' + slug(name), listId]);
+  await kvPipeline(cmds);
+}
+
+export const findListByName = (chatKey, name) => slug(name) ? kv('GET', 'byname:' + chatKey + ':' + slug(name)) : null;
 
 /* --- telegram message ↔ task mapping (reply-to-comment, done buttons) --- */
 

@@ -46,14 +46,16 @@ Override via `localStorage`: `tasklist.relays` (JSON array of wss URLs) and
 ## Telegram bot
 
 The `api/` directory is an optional Telegram bot (Vercel functions, still zero
-dependencies): link a chat to a tasklist and add tasks, check them off with inline
-✓ buttons, and comment by replying — from Telegram. A cron poller pushes live
-activity from the relays into linked chats. Each Telegram user gets their own
-nostr keypair (derived server-side from `TASKLIST_MASTER_SECRET`), so their
-actions are attributed by name exactly like a web user's.
+dependencies): every chat, group, channel, or forum topic transparently gets its
+own tasklist the first time someone adds a task. Check tasks off with inline
+✓ buttons, comment by replying, and a cron poller pushes live activity from the
+relays into linked chats. Each Telegram user gets their own nostr keypair
+(derived server-side from `TASKLIST_MASTER_SECRET`), so their actions are
+attributed by name exactly like a web user's.
 
-Commands: `/newlist [name]`, `/link <url>`, `/add <task>` (any message in a
-private chat), `/list`, `/unlink`, `/help`.
+Commands: `/task <task>` (any message in a private chat), `/tasks`,
+`/tasklist [name or URL]` to switch lists or create one by name, `/unlink`,
+`/help`.
 
 Env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (set the webhook with
 `secret_token`), `TASKLIST_MASTER_SECRET`, `CRON_SECRET`, and an Upstash Redis
