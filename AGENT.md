@@ -147,6 +147,30 @@ pubkeys appear in the list; it is re-issued (debounced) on growth.
   (`shortUrl()`: no scheme/www, host + first path segment, rest elided) with the full
   URL in `title`.
 
+## The Telegram bot (`api/`)
+
+The bot is the one server-side component, and it is *just another nostr client*:
+Vercel functions (`api/telegram.mjs` webhook, `api/cron.mjs` 1-minute notifier) that
+sign and publish the same kinds listed above. Rules:
+
+- **Zero npm dependencies here too.** Native `fetch`/`WebSocket` (Node 22+), Upstash
+  Redis over REST (`_lib/kv.mjs`), Telegram over HTTPS (`_lib/tg.mjs`).
+- `_lib/crypto.mjs` is extracted **verbatim** from index.html's first `<script>`
+  block; `_lib/state.mjs` is a port of `processEvent`/`taskState`. If those change in
+  index.html, re-sync both — same validation, caps, and fold order, always.
+- Per-Telegram-user identity: sk = HMAC(`TASKLIST_MASTER_SECRET`, `tg-user:<id>`)
+  mod n (`_lib/bot.mjs`). Losing the master secret orphans every Telegram identity;
+  leaking it lets anyone sign as them. It lives only in Vercel env.
+- KV state: `chat:{chatId}` link, `chats` set, `cursor:{chatId}` + `seen:{chatId}`
+  (notification dedupe; a chat's own publishes are pre-seeded so it never gets its
+  own actions echoed back), `msg:{chatId}:{messageId}` → taskId (reply-to-comment
+  and ✓ buttons; callback_data carries a 16-char event-id prefix, resolved against
+  a fresh relay fetch).
+- Webhook auth = Telegram `secret_token` header; cron auth = Vercel `CRON_SECRET`
+  bearer. Always answer the webhook 200 (Telegram retry-storms otherwise).
+- Test: `node <scratch>/bot-e2e.mjs` style — mock Telegram API captures sends, mem
+  KV, real relays with a throwaway list id, then assert the fold from the relays.
+
 ## How to add a feature (the pattern)
 
 Example: "add due dates".

@@ -43,6 +43,22 @@ Default relays: `relay.damus.io`, `nos.lol`, `relay.primal.net`, `offchain.pub`.
 Override via `localStorage`: `tasklist.relays` (JSON array of wss URLs) and
 `tasklist.blossom` (server URL).
 
+## Telegram bot
+
+The `api/` directory is an optional Telegram bot (Vercel functions, still zero
+dependencies): link a chat to a tasklist and add tasks, check them off with inline
+✓ buttons, and comment by replying — from Telegram. A cron poller pushes live
+activity from the relays into linked chats. Each Telegram user gets their own
+nostr keypair (derived server-side from `TASKLIST_MASTER_SECRET`), so their
+actions are attributed by name exactly like a web user's.
+
+Commands: `/newlist [name]`, `/link <url>`, `/add <task>` (any message in a
+private chat), `/list`, `/unlink`, `/help`.
+
+Env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (set the webhook with
+`secret_token`), `TASKLIST_MASTER_SECRET`, `CRON_SECRET`, and an Upstash Redis
+KV (`KV_REST_API_URL`/`KV_REST_API_TOKEN`) for chat↔list links and cursors.
+
 ## Files
 
 ```
@@ -50,6 +66,7 @@ index.html            the entire app — single self-contained file
 sw.js                 service worker: offline app-shell cache (PWA)
 manifest.webmanifest  PWA manifest
 icon-*.png            app icons
+api/                  Telegram bot (optional; Vercel functions + cron)
 AGENT.md              protocol details, invariants, and contributor instructions
 ```
 
