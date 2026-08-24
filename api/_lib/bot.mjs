@@ -111,17 +111,6 @@ export async function rememberList(chatKey, listId, name) {
 
 export const findListByName = (chatKey, name) => slug(name) ? kv('GET', 'byname:' + chatKey + ':' + slug(name)) : null;
 
-/* --- telegram message ↔ task mapping (reply-to-comment, done buttons) --- */
-
-export async function rememberTaskMsg(chatId, messageId, taskId) {
-  await kvPipeline([
-    ['SET', 'msg:' + chatId + ':' + messageId, taskId],
-    ['EXPIRE', 'msg:' + chatId + ':' + messageId, 30 * 86400],
-  ]);
-}
-
-export const taskForMsg = (chatId, messageId) => kv('GET', 'msg:' + chatId + ':' + messageId);
-
 export function randomListId() {
   const b = new Uint8Array(8);
   crypto.getRandomValues(b);

@@ -173,6 +173,12 @@ sign and publish the same kinds listed above. Rules:
   fetch), `byname:{chatKey}:{slug}` → listId (/tasklist name switching).
 - Task messages — from Telegram actions and from cron notifications alike — carry
   ✓ Done plus "I'll take it" while unassigned; claim state is re-checked on tap.
+- Stale CTAs self-heal (`_lib/taskmsgs.mjs`): every message displaying a task is
+  registered with its base text; when the task's state changes (button tap, or a
+  change arriving from the relays via cron), all of them are edited in place —
+  original text kept, buttons swapped, a status line appended ('✅ Done — Anna' /
+  '👋 Anna is on it'). Activity-log messages are separate sends and are never
+  rewritten into something they didn't say; edits only ever append status.
 - Command surface: /task, /tasks, /tasklist [name|url], /unlink, /help
   (/add, /list, /newlist, /link kept as hidden aliases).
 - Webhook auth = Telegram `secret_token` header; cron auth = Vercel `CRON_SECRET`

@@ -7,6 +7,7 @@
 import { tg, send as tgSend, esc } from './_lib/tg.mjs';
 import { fetchEvents } from './_lib/nostr.mjs';
 import { foldList, taskState, nameOf, openTasks, LIST_KINDS, KIND_PROFILE } from './_lib/state.mjs';
+import { taskButtons, statusLine, rememberTaskMsg, taskForMsg, updateTaskMessages } from './_lib/taskmsgs.mjs';
 import * as bot from './_lib/bot.mjs';
 
 const HELP = [
@@ -34,18 +35,11 @@ async function loadFold(listId) {
 const foldTitle = (fold) =>
   (fold.owner ? nameOf(fold, fold.owner) + "'s " : '') + (fold.listMeta.name || 'tasklist');
 
-function taskLine(fold, t, st) {
-  let line = (st.done ? '✅ <s>' : '○ ') + esc(t.title) + (st.done ? '</s>' : '');
-  if (!st.done && st.assignee) line += '\n👋 ' + esc(nameOf(fold, st.assignee)) + ' is on it';
-  return line;
-}
-
-function taskKeyboard(t, st) {
-  if (st.done) return undefined;
-  const row = [{ text: '✓ Done', callback_data: 'd:' + t.id.slice(0, 16) }];
-  if (!st.assignee) row.push({ text: "👋 I'll take it", callback_data: 'c:' + t.id.slice(0, 16) });
-  return { inline_keyboard: [row] };
-}
+const statusOf = (fold, st) => ({
+  done: st.done,
+  by: st.doneBy ? nameOf(fold, st.doneBy) : null,
+  assignee: st.assignee ? nameOf(fold, st.assignee) : null,
+});
 
 /* A chat's scope: forum topics are their own scope, so each topic gets its own list. */
 function scopeOf(msg) {
@@ -80,9 +74,9 @@ async function cmdTask(scope, user, title) {
   if (!title) { await scope.send('Usage: /task buy milk'); return; }
   const link = await ensureLink(scope, user);
   const evt = await bot.addTask(user, scope.chatKey, link.listId, title);
-  const m = await scope.send('○ ' + esc(title.slice(0, 300)),
-    { parse_mode: 'HTML', reply_markup: taskKeyboard({ id: evt.id }, { done: false, assignee: null }) });
-  await bot.rememberTaskMsg(scope.chatId, m.message_id, evt.id);
+  const base = '○ ' + esc(title.slice(0, 300));
+  const m = await scope.send(base, { parse_mode: 'HTML', reply_markup: taskButtons(evt.id, {}) });
+  await rememberTaskMsg(scope.chatKey, scope.chatId, m.message_id, evt.id, base);
 }
 
 async function cmdTasks(scope, user) {
@@ -97,8 +91,12 @@ async function cmdTasks(scope, user) {
   await scope.send('<b>' + esc(foldTitle(fold)) + '</b> — ' + open.length + ' to do:',
     { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
   for (const { t, st } of open.slice(0, 25)) {
-    const m = await scope.send(taskLine(fold, t, st), { parse_mode: 'HTML', reply_markup: taskKeyboard(t, st) });
-    await bot.rememberTaskMsg(scope.chatId, m.message_id, t.id);
+    const base = '○ ' + esc(t.title);
+    const status = statusOf(fold, st);
+    const kb = taskButtons(t.id, status);
+    const m = await scope.send(base + statusLine(status),
+      { parse_mode: 'HTML', reply_markup: kb.inline_keyboard.length ? kb : undefined });
+    await rememberTaskMsg(scope.chatKey, scope.chatId, m.message_id, t.id, base);
   }
   if (open.length > 25) await scope.send('…and ' + (open.length - 25) + ' more on ' + bot.listUrl(link.listId));
 }
@@ -151,7 +149,7 @@ async function onMessage(msg) {
 
   // Replies to a known task message become comments on that task.
   if (msg.reply_to_message && text && !text.startsWith('/')) {
-    const taskId = await bot.taskForMsg(scope.chatId, msg.reply_to_message.message_id);
+    const taskId = await taskForMsg(scope.chatId, msg.reply_to_message.message_id);
     if (taskId) {
       const link = await bot.chatLink(scope.chatKey);
       if (!link) return;
@@ -193,21 +191,18 @@ async function onCallback(q) {
   const t = [...fold.tasks.values()].find((x) => x.id.startsWith(idPrefix));
   if (!t) { await ack("Couldn't find that task any more."); return; }
   const st = taskState(fold, t);
+  const fallbackBase = '○ ' + esc(t.title);
   if (op === 'd') {
     if (!st.done) await bot.taskAction(q.from, scope.chatKey, link.listId, t.id, 'done');
     await ack('Done ✓');
-    await tg('editMessageText', {
-      chat_id: scope.chatId, message_id: q.message.message_id, parse_mode: 'HTML',
-      text: '✅ <s>' + esc(t.title) + '</s>\n— ' + esc(bot.displayName(q.from)),
-    }).catch(() => {});
+    // Refresh every message showing this task, not just the tapped one.
+    await updateTaskMessages(scope.chatKey, scope.chatId, t.id,
+      { done: true, by: bot.displayName(q.from) }, fallbackBase, q.message.message_id);
   } else {
     if (!st.done) await bot.taskAction(q.from, scope.chatKey, link.listId, t.id, 'claim');
     await ack("It's yours 👋");
-    await tg('editMessageText', {
-      chat_id: scope.chatId, message_id: q.message.message_id, parse_mode: 'HTML',
-      text: '○ ' + esc(t.title) + '\n👋 ' + esc(bot.displayName(q.from)) + ' is on it',
-      reply_markup: { inline_keyboard: [[{ text: '✓ Done', callback_data: 'd:' + t.id.slice(0, 16) }]] },
-    }).catch(() => {});
+    await updateTaskMessages(scope.chatKey, scope.chatId, t.id,
+      { assignee: bot.displayName(q.from) }, fallbackBase, q.message.message_id);
   }
 }
 

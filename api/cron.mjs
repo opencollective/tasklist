@@ -7,20 +7,20 @@ import { tg, send, esc } from './_lib/tg.mjs';
 import { fetchEvents } from './_lib/nostr.mjs';
 import { foldList, taskState, nameOf, tagVal, LIST_KINDS, KIND_TASK, KIND_ACTION, KIND_META, KIND_COMMENT } from './_lib/state.mjs';
 import { kv, kvPipeline } from './_lib/kv.mjs';
+import { taskButtons, statusLine, rememberTaskMsg, updateTaskMessages } from './_lib/taskmsgs.mjs';
 import * as bot from './_lib/bot.mjs';
 
 const MAX_PER_RUN = 15; // stay well under Telegram's ~20 msg/min per chat
 
-/* Same buttons a task gets when added from Telegram: complete in one tap, and claim
-   it while nobody has it. State is as of this fold — the buttons re-check on tap. */
-function taskButtons(fold, taskId) {
+function statusFromFold(fold, taskId) {
   const t = fold.tasks.get(taskId);
-  if (!t) return undefined;
+  if (!t) return {};
   const st = taskState(fold, t);
-  if (st.done || st.deleted) return undefined;
-  const row = [{ text: '✓ Done', callback_data: 'd:' + taskId.slice(0, 16) }];
-  if (!st.assignee) row.push({ text: "👋 I'll take it", callback_data: 'c:' + taskId.slice(0, 16) });
-  return { inline_keyboard: [row] };
+  return {
+    done: st.done || st.deleted,
+    by: st.doneBy ? nameOf(fold, st.doneBy) : null,
+    assignee: st.assignee ? nameOf(fold, st.assignee) : null,
+  };
 }
 
 function describe(fold, evt) {
@@ -63,6 +63,21 @@ async function notifyChat(chatKey, link, fold, events) {
     .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
   if (!fresh.length) return 0;
   const seenChecks = await kvPipeline(fresh.map((e) => ['SISMEMBER', 'seen:' + chatKey, e.id]));
+
+  /* First, refresh previously sent messages for tasks whose state changed in this
+     batch — original text kept, CTA swapped for the latest status. Done before
+     sending so the new notifications never get edited in the same pass. */
+  const affected = new Set();
+  for (let i = 0; i < fresh.length; i++) {
+    if (seenChecks[i] || fresh[i].kind !== KIND_ACTION) continue;
+    const tid = tagVal(fresh[i], 'e');
+    if (tid && fold.tasks.has(tid)) affected.add(tid);
+  }
+  for (const tid of affected) {
+    await updateTaskMessages(chatKey, chatId, tid, statusFromFold(fold, tid),
+      '○ ' + esc(fold.tasks.get(tid).title));
+  }
+
   let sent = 0, lastAt = cursor;
   for (let i = 0; i < fresh.length; i++) {
     const evt = fresh[i];
@@ -73,10 +88,18 @@ async function notifyChat(chatKey, link, fold, events) {
     if (d) {
       const extra = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
       if (link.threadId) extra.message_thread_id = link.threadId;
-      if (d.button && d.taskId) extra.reply_markup = taskButtons(fold, d.taskId);
+      const status = d.taskId ? statusFromFold(fold, d.taskId) : {};
+      let text = d.text;
+      // ➕ lines show the task's *current* state right away (it may already be
+      // claimed or even done by the time this batch is delivered).
+      if (evt.kind === KIND_TASK && (status.done || status.assignee)) text += statusLine(status);
+      if (d.button && d.taskId) {
+        const kb = taskButtons(d.taskId, status);
+        if (kb.inline_keyboard.length) extra.reply_markup = kb;
+      }
       try {
-        const m = await send(chatId, d.text, extra);
-        if (d.taskId) await bot.rememberTaskMsg(chatId, m.message_id, d.taskId);
+        const m = await send(chatId, text, extra);
+        if (d.taskId) await rememberTaskMsg(chatKey, chatId, m.message_id, d.taskId, d.text);
         sent++;
       } catch (err) {
         // 403 = bot kicked from the chat: stop notifying it
