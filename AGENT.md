@@ -17,7 +17,7 @@ shown in the UI — users just see a task list that works. Keep it that way.
 
 ## Philosophy (the rules that shaped every decision)
 
-1. **One self-contained HTML file is the deliverable.** `dist/tasklist.html` contains
+1. **One self-contained HTML file is the deliverable.** `index.html` contains
    everything: markup, CSS, crypto, QR generator, app logic. Zero runtime dependencies,
    zero CDN imports, zero build-time npm packages. It must work when copied to any static
    host, renamed, or opened from a USB stick years from now. Never introduce an external
@@ -42,41 +42,43 @@ shown in the UI — users just see a task list that works. Keep it that way.
 
 5. **Everything is verified, nothing is trusted from memory.** The crypto and QR code
    in this project are hand-written. They are trustworthy *only* because of the test
-   suite: BIP-340 official vectors + an independent verifier, bit-for-bit equality with
-   a battle-tested reference QR encoder, and a full multiplayer e2e suite. If you touch
-   `crypto.js` or `qr.js`, the corresponding tests are not optional. History lesson:
+   discipline: BIP-340 official vectors + an independent verifier, and bit-for-bit
+   equality with a battle-tested reference QR encoder. If you touch the crypto or QR
+   script blocks, those verifications are not optional. History lesson:
    three subtle QR bugs (reversed format bits, misplaced format copy, reversed RS
    generator polynomial) all produced *plausible-looking* QR codes that no scanner could
    read. Only reference comparison caught them.
 
-6. **Readable source is a feature.** The built file is trimmed (comments/indentation
-   stripped) but not minified/mangled. Anyone can view-source and audit what signs with
+6. **Readable source is a feature.** The file is kept trim but never
+   minified/mangled. Anyone can view-source and audit what signs with
    their key. Don't add a mangling minifier.
 
 ## Repository layout
 
 ```
 tasklist/
-├── AGENT.md            ← you are here
-├── build.js            ← assembles dist/tasklist.html from src/ (node build.js)
-├── src/
-│   ├── template.html   ← markup + all CSS + %%CRYPTO%% %%QR%% %%APP%% placeholders
-│   ├── crypto.js       ← secp256k1, BIP-340 Schnorr, SHA-256 (WebCrypto), bech32,
-│   │                     nostr event finalization. No deps. Exposes window.NostrCrypto
-│   ├── qr.js           ← QR encoder (byte mode, ECC M, v1-10) → SVG. Exposes window.QR
-│   └── app.js          ← everything else: state, relay pool, blossom upload, UI
-├── test/
-│   ├── crypto.test.js  ← BIP-340 vectors + independent Schnorr verifier + bech32 checks
-│   ├── qr.test.js      ← renders QRs in Chromium, decodes with OpenCV (python3/cv2)
-│   ├── relay.js        ← minimal in-memory nostr relay (uses playwright's bundled ws)
-│   └── e2e.js          ← full multiplayer suite: 2 browser contexts + local relay
-│                         + mock Blossom server. THE gate for every change.
-└── dist/
-    └── tasklist.html   ← the deliverable (~48 KB raw, ~16 KB gzipped)
+├── AGENT.md              ← you are here (also served at tasklist.sh/AGENT.md)
+├── llms.txt              ← agent-facing protocol summary, served at tasklist.sh/llms.txt
+├── index.html            ← THE deliverable: markup, CSS, crypto (secp256k1, BIP-340
+│                           Schnorr, bech32 — window.NostrCrypto), QR encoder
+│                           (window.QR), and all app logic, in three <script> blocks
+├── sw.js                 ← service worker: offline app-shell cache (PWA)
+├── manifest.webmanifest  ← PWA manifest        icon-*.png ← app icons
+├── vercel.json           ← cron schedule for the bot notifier
+└── api/                  ← Telegram bot (Vercel functions; see "The Telegram bot")
 ```
 
-Build: `node build.js`. Test: `node test/crypto.test.js && node test/qr.test.js && node test/e2e.js`.
-The e2e suite must end with `ALL CHECKS PASSED` before any change ships.
+There is no build step and no checked-in test suite: edit `index.html` directly and
+keep it self-contained. Verify changes by driving the app headlessly (Chromium
+`--headless=new --dump-dom` with an injected script that points `tasklist.relays`
+at a local/dead relay) and, for the bot, by invoking the handlers in `api/` with a
+mock Telegram API and asserting the resulting events on the relays. If you touch
+the crypto or QR blocks, test against BIP-340 official vectors / a reference QR
+encoder — see "Everything is verified" above; history shows plausible-looking
+wrong output in both.
+
+Deploys: pushing to `main` on github.com/opencollective/tasklist auto-deploys to
+tasklist.sh (Vercel).
 
 ## The protocol (event model)
 
@@ -200,48 +202,43 @@ Example: "add due dates".
    `processEvent` so they land in the localStorage cache. Old clients must safely ignore
    your new events (they already ignore unknown kinds/actions — keep that true), and new
    clients must tolerate their absence. Never repurpose an existing kind/action meaning.
-5. **Test.** Add e2e checks: perform the action as Alice, assert Bob sees it live, then
-   kill the relay, reload, and assert it renders from cache. Follow the existing
-   `check()`/`until()` style in `test/e2e.js`.
-6. **Build + full suite.** `node build.js && node test/e2e.js` (plus crypto/QR tests if
-   touched). Screenshot review: the suite writes PNGs to `dist/` — look at them.
+5. **Test.** Drive the change headlessly: perform the action as Alice, assert Bob
+   (a second profile/context) sees it, then reload with relays unreachable and
+   assert it renders from the localStorage cache.
+6. **Review the rendered result.** Take headless screenshots and look at them —
+   layout regressions don't show up in DOM assertions.
 
-## Testing infrastructure notes
+## Testing notes
 
-- Tests need no network. `test/relay.js` is an in-memory nostr relay; `test/e2e.js`
-  spins it up with a mock Blossom server (which *enforces* the auth protocol: kind
-  24242, matching `x` sha256, signed). Browser contexts get `tasklist.relays` /
-  `tasklist.blossom` pointed at localhost via `addInitScript`.
-- `ws` server comes from playwright's bundled `utilsBundle` (no npm install needed).
-- QR verification is two independent layers: (a) bit-for-bit equality against the
-  Kazuhiko Arase encoder bundled inside npm's `qrcode-terminal`
-  (`/opt/node*/lib/node_modules/npm/node_modules/qrcode-terminal/vendor/QRCode/`), for
-  the same version/ECC across all 8 masks; (b) screenshot → OpenCV decode round-trip.
-  Note: OpenCV's *encoder* is buggy (transposed format info) and its detector fails on
-  some perfectly crisp synthetic images — treat cv2 as a decoder of rendered PNGs only,
-  and treat Arase as ground truth for matrices.
-- Two browser contexts = two users (separate localStorage/keys). Assert cross-user
-  propagation with polling (`until`), never fixed sleeps.
+- Web: run Chromium `--headless=new` against `file://…/index.html#<listid>` with an
+  early injected script that (a) sets `localStorage['tasklist.relays']` to a local
+  or dead relay so runs never touch public relays, and (b) shims
+  `requestAnimationFrame` to `setTimeout` (it stops firing under
+  `--virtual-time-budget`, freezing the app's render loop). A shared
+  `--user-data-dir` persists localStorage across runs for multi-list/cache flows.
+- Bot (`api/`): import the handlers directly, stub the Telegram API with a local
+  HTTP server that captures calls, leave KV unset (falls back to in-memory), and
+  use a throwaway random list id — then assert the resulting events by fetching
+  them back from the relays and folding.
+- Two users = two browser profiles / two Telegram user ids (separate keys). Assert
+  cross-user propagation by polling, never fixed sleeps.
+- QR verification is two independent layers: (a) bit-for-bit equality against a
+  reference encoder (Kazuhiko Arase's) for the same version/ECC across all 8 masks;
+  (b) screenshot → decode round-trip (OpenCV's *encoder* is buggy — use cv2 only to
+  decode rendered PNGs, and treat Arase as ground truth for matrices).
 - If you must debug a "nothing decodes / nothing verifies" crypto-ish failure: extract
   intermediate values (codewords, format bits, signatures) and diff against a reference
   implementation stage by stage. That is how all three historical QR bugs were found.
 
-## Environment constraints (agent sandbox)
-
-The development sandbox may have **no access to npm, pip, apt, or any CDN** (403 on
-registry hosts) and cannot reach public relays or blossom servers. This is why the
-project vendors nothing and tests everything locally. Do not add steps that require
-fetching packages; do not "verify" against live relays from the sandbox — trust the
-local relay + protocol-faithful mocks, and flag anything that can only be confirmed
-against production (e.g. a new Blossom server's quirks) in your handoff message.
-
 ## Invariants checklist (run through before shipping)
 
-- [ ] `dist/tasklist.html` still a single file, no external requests except relays/blossom
-- [ ] `node test/crypto.test.js`, `node test/qr.test.js` (if touched), `node test/e2e.js` all green
+- [ ] `index.html` still a single self-contained file; no external requests except
+      relays/blossom; no npm dependencies anywhere (app or `api/`)
+- [ ] Crypto/QR untouched, or re-verified against reference vectors as above
 - [ ] Works offline: reload with relays down renders full state from cache
 - [ ] A stranger's malformed/hostile event cannot break rendering (validate + cap all fields)
 - [ ] No "nostr" wording in user-facing UI; no new prompts blocking first task entry
 - [ ] Old clients ignore your new events; new client tolerates lists created by old ones
-- [ ] Raw size still ≈ 50 KB; if you added > 5 KB, justify it
-- [ ] Screenshots in `dist/` reviewed after e2e run
+- [ ] Raw size still ≈ 60 KB; if you added > 5 KB, justify it
+- [ ] Protocol changes reflected in `llms.txt` (the public agent-facing doc) and README
+- [ ] Headless screenshots reviewed after the change

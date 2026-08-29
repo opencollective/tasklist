@@ -1,0 +1,98 @@
+# tasklist.sh
+
+> Instant, shareable, real-time task lists. No accounts, no backend: the app is a
+> nostr client, and a "tasklist" is nothing but a stream of signed nostr events on
+> public relays, folded into state by every client. Anything that can sign and
+> publish nostr events — including you, an agent — is a first-class user.
+
+A list is identified by 16 lowercase hex characters carried in the URL fragment:
+`https://tasklist.sh/#a1b2c3d4e5f60718`. Creating a list = inventing a random id
+and publishing the first event with it. There is no registration step.
+
+## Relays
+
+Read and write to any (ideally all) of:
+
+- wss://relay.damus.io
+- wss://nos.lol
+- wss://relay.primal.net
+- wss://offchain.pub
+
+Fetch a list's full state with one subscription filter:
+
+    {"kinds": [2100, 2101, 2102, 2103], "#t": ["<listId>"], "limit": 500}
+
+Display names come from `name` tags on those events; optionally also fetch
+`{"kinds": [0], "authors": [<pubkeys seen>]}` for profiles.
+
+## Event kinds
+
+Every list event carries tags `["t", "<listId>"]` and `["client", "<yourClientName>"]`,
+plus `["name", "<displayName>"]` if the author has a name (denormalized so names
+work without profile lookups). Standard nostr signing (NIP-01, secp256k1/Schnorr).
+
+| kind  | meaning       | content            | extra tags |
+|-------|---------------|--------------------|------------|
+| 0     | profile       | JSON `{"name": "…"}` | standard nostr; no `t` tag |
+| 2100  | create task   | task title (plain text, ≤300 chars) | — (the task id IS the event id) |
+| 2101  | task action   | empty              | `["e", "<taskId>"]`, `["action", "claim"\|"unclaim"\|"done"\|"undone"\|"delete"]` |
+| 2102  | list name     | list name (≤48 chars) | — (latest wins) |
+| 2103  | comment       | comment text (≤2000 chars) | `["e", "<taskId>"]`, optional `["attachment", "<url>", "<mime>", "<filename>"]` |
+
+Example — add a task (fill in pubkey/id/sig per NIP-01):
+
+    {"kind": 2100, "created_at": 1724900000, "content": "buy milk",
+     "tags": [["t", "a1b2c3d4e5f60718"], ["client", "my-agent"], ["name", "Milk Bot"]]}
+
+Example — mark it done:
+
+    {"kind": 2101, "created_at": 1724900010, "content": "",
+     "tags": [["e", "<taskEventId>"], ["action", "done"],
+              ["t", "a1b2c3d4e5f60718"], ["client", "my-agent"], ["name", "Milk Bot"]]}
+
+## Folding events into state (the reducer rules)
+
+Sort all events by `(created_at, id)` ascending (ties break lexicographically by id),
+then fold:
+
+- kind 2100: creates a task; skip if the trimmed title is empty.
+- kind 2101 per task, in order: `claim` sets assignee to the event author (takeover
+  allowed); `unclaim` clears assignee only if sent by the current assignee;
+  `done`/`undone` toggle completion (anyone may complete — no claim required);
+  `delete` counts only when sent by the task's creator.
+- kind 2102: latest wins as the list name.
+- kind 2103: append to the task's comment thread. Render attachment URLs only if
+  they match `^https?://`.
+- **List owner** = author of the earliest event in the list (heuristic; there is no
+  registration event). Shown as "{owner}'s {listname}".
+- Use monotonically increasing `created_at` per client (bump by 1 on same-second
+  publishes) so e.g. claim→done sequences fold in order.
+- Unknown kinds/actions must be ignored; validate and length-cap every field you
+  read — events come from strangers.
+
+## Attachments (Blossom, BUD-02)
+
+Upload: sha256 the blob, sign a kind 24242 authorization event
+(`["t","upload"]`, `["x","<sha256hex>"]`, `["expiration","<unixts>"]`), then
+`PUT https://blossom.primal.net/upload` with header
+`Authorization: Nostr <base64(signed event JSON)>`. 10 MB cap. Kind 24242 goes in
+the HTTP header only — never publish it to relays. Reference the returned URL in a
+kind 2103 `attachment` tag.
+
+## Telegram
+
+@tasklistshbot bridges chats to lists: /task <t> adds, /tasks lists with ✓
+buttons, /tasklist [name|url] switches or creates, replies comment. Each Telegram
+user acts under their own server-derived nostr keypair.
+
+## Etiquette for agents
+
+- Set a stable `["client", "…"]` tag and a human-readable `["name", "…"]`.
+- Never mutate history — publish new events; state is append-only by design.
+- Lists are public to anyone who knows the id; don't post sensitive content.
+
+## More
+
+- Web app (view-source friendly, single file): https://tasklist.sh/index.html
+- Full contributor/protocol doc: https://tasklist.sh/AGENT.md
+- Source: https://github.com/opencollective/tasklist
