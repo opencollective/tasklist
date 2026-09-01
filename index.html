@@ -75,9 +75,17 @@ background: var(--accent); color: #fff;
 background: var(--card); border: 1px solid var(--line); border-radius: 16px;
 box-shadow: var(--stack-shadow); overflow: hidden; position: relative;
 }
-.tl + .tl { margin-top: -16px; }
+.tl + .tl { margin-top: -16px; transition: margin-top .24s cubic-bezier(.32,.72,0,1); }
 .tl.open { box-shadow: var(--stack-shadow), var(--shadow); }
 .tl.open + .tl { margin-top: 10px; }
+/* Deck animation (see animateSwitch): fold shut / lift out / unfold. */
+.tl.tl-anim { transition: height .24s cubic-bezier(.32,.72,0,1), transform .24s cubic-bezier(.32,.72,0,1), box-shadow .24s cubic-bezier(.32,.72,0,1); will-change: height; }
+.tl.tl-armed { transform: translateY(-7px) rotate(-.6deg) scale(1.012); box-shadow: var(--stack-shadow), var(--shadow); z-index: 6; transition: transform .24s cubic-bezier(.32,.72,0,1), box-shadow .24s cubic-bezier(.32,.72,0,1); }
+.tl.tl-folded + .tl { margin-top: -16px; }
+.tl.open.tl-unfolding + .tl { margin-top: -16px; }
+@media (prefers-reduced-motion: reduce) {
+.tl, .tl + .tl, .tl.tl-anim, .tl.tl-armed { transition: none; }
+}
 .tl.closed .tl-head { padding: 14px 16px; }
 .tl.closed:not(:last-child) .tl-head { padding-bottom: 32px; }
 .tl-head { display: flex; align-items: center; gap: 9px; padding: 12px 14px; cursor: pointer; user-select: none; min-width: 0; }
@@ -805,7 +813,10 @@ const prev = usedLists().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0
 listId = prev ? prev.id : randomListId();
 history.replaceState(null, '', '#' + listId);
 }
-window.addEventListener('hashchange', () => location.reload());
+window.addEventListener('hashchange', () => {
+const id = (location.hash || '').replace(/^#\/?/, '').replace(/[^a-zA-Z0-9_-]/g, '');
+if (id && id !== listId) animateSwitch(id);
+});
 const seen = new Set();
 const tasks = new Map();      // taskId -> {id, title, creator, createdAt}
 const actions = new Map();    // taskId -> [{id, pubkey, created_at, act}]
@@ -837,14 +848,15 @@ try { localStorage.setItem(LS.lists, JSON.stringify(knownLists)); } catch {}
 }
 saveLists();
 let cacheTimer = null;
-function saveCache() {
-clearTimeout(cacheTimer);
-cacheTimer = setTimeout(() => {
+function writeCache() {
 try {
 if (cacheEvents.length > 2000) cacheEvents = cacheEvents.slice(-2000);
 localStorage.setItem(LS.cache(listId), JSON.stringify(cacheEvents));
 } catch {}
-}, 250);
+}
+function saveCache() {
+clearTimeout(cacheTimer);
+cacheTimer = setTimeout(writeCache, 250);
 }
 function savePending() {
 try { localStorage.setItem(LS.pending(listId), JSON.stringify(pending)); } catch {}
@@ -942,6 +954,9 @@ document.getElementById('conntxt').textContent = 'to ' + open + (open === 1 ? ' 
 function profileFilter() {
 return { kinds: [KIND_PROFILE], authors: [...authors] };
 }
+function subFilter() {
+return { kinds: [KIND_TASK, KIND_ACTION, KIND_META, KIND_COMMENT], '#t': [listId], limit: 1000 };
+}
 let profSubTimer = null;
 function scheduleProfileSub() {
 clearTimeout(profSubTimer);
@@ -961,7 +976,7 @@ ws.onopen = () => {
 clearTimeout(timer);
 r.status = 'open';
 r.backoff = 800;
-ws.send(JSON.stringify(['REQ', SUB_ID, { kinds: [KIND_TASK, KIND_ACTION, KIND_META, KIND_COMMENT], '#t': [listId], limit: 1000 }]));
+ws.send(JSON.stringify(['REQ', SUB_ID, subFilter()]));
 if (authors.size) ws.send(JSON.stringify(['REQ', SUB_PROFILES, profileFilter()]));
 for (const id in pending) ws.send(JSON.stringify(['EVENT', pending[id]]));
 connUI();
@@ -994,9 +1009,9 @@ const t = Math.floor(Date.now() / 1000);
 lastCreatedAt = Math.max(t, lastCreatedAt + 1);
 return lastCreatedAt;
 }
-async function signAndSend(kind, tags, content) {
+async function signAndSend(kind, tags, content, lid) {
 const allTags = kind === KIND_PROFILE ? tags : tags.concat(
-[['t', listId], ['client', 'tasklist']], myName ? [['name', myName]] : []);
+[['t', lid || listId], ['client', 'tasklist']], myName ? [['name', myName]] : []);
 const evt = await C.finalizeEvent({ kind, created_at: now(), tags: allTags, content }, sk);
 processEvent(evt, false);
 publish(evt);
@@ -1300,6 +1315,7 @@ function sendComment(t) {
 const text = (drafts.get(t.id) || '').trim().slice(0, 2000);
 const file = pendingFiles.get(t.id);
 if ((!text && !file) || uploading.has(t.id)) return;
+const lid = listId; // uploads take a while; the user may switch lists meanwhile
 const doSend = async () => {
 let att = null;
 if (file) {
@@ -1313,7 +1329,7 @@ const tags = [['e', t.id]];
 if (att) tags.push(['attachment', att.url, att.mime, att.name]);
 drafts.delete(t.id);
 pendingFiles.delete(t.id);
-await signAndSend(KIND_COMMENT, tags, text);
+await signAndSend(KIND_COMMENT, tags, text, lid);
 };
 if (!myName) askProfileName(doSend);
 else doSend();
@@ -1499,6 +1515,7 @@ el('button', { class: 'btn danger', id: 'confirmremove', onclick: () => { closeM
 // Rebuild the card stack in registry order; the active list keeps its position and
 // stays the same live DOM node (listeners, focus state, drafts all survive).
 function renderStack() {
+$('activelist').dataset.lid = listId;
 $('stack').replaceChildren(...knownLists.map((l) => {
 if (l.id === listId) return $('activelist');
 const s = summarizeList(l.id);
@@ -1509,8 +1526,82 @@ el('button', { class: 'del', title: 'Remove this tasklist from this device', onc
 e.stopPropagation();
 confirmRemove(l.id, s.ownerName + "'s " + s.name);
 } }, '✕'));
-return el('section', { class: 'tl closed' }, head);
+return el('section', { class: 'tl closed', 'data-lid': l.id }, head);
 }));
+}
+/* Switch the active list in place — no page reload. Per-list state is reset, the new
+   list renders instantly from its localStorage cache, and the open relay sockets are
+   re-subscribed (a REQ with the same sub id replaces the old subscription). */
+function switchList(id) {
+if (id === listId || !/^[a-zA-Z0-9_-]{1,64}$/.test(id)) return;
+writeCache(); // flush the old list's cache now — the debounced timer would write to the wrong key
+clearTimeout(cacheTimer);
+listId = id;
+if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+seen.clear(); tasks.clear(); actions.clear(); comments.clear();
+listMeta = { name: '', at: 0, evtId: '' };
+earliest = null;
+expandedId = null;
+cacheEvents = loadJSON(LS.cache(listId), []);
+pending = loadJSON(LS.pending(listId), {});
+const cur = knownLists.find((l) => l.id === listId);
+if (cur) cur.lastOpened = Date.now();
+else knownLists.unshift({ id: listId, lastOpened: Date.now() });
+knownLists = knownLists.filter((l) => l.id === listId || loadJSON(LS.cache(l.id), []).length > 0);
+saveLists();
+for (const evt of cacheEvents) processEvent(evt, true);
+for (const pid in pending) processEvent(pending[pid], true);
+const req = JSON.stringify(['REQ', SUB_ID, subFilter()]);
+for (const r of relays) if (r.status === 'open') {
+try {
+r.ws.send(req);
+for (const pid in pending) r.ws.send(JSON.stringify(['EVENT', pending[pid]]));
+} catch {}
+}
+render();
+}
+/* The deck animation: the open card folds shut (its height animates, so the cards
+   below slide along for free), the tapped card lifts slightly out of the deck, then
+   — once the data has switched — unfolds into the open card. Physical, Apple-style. */
+const EASE_MS = 240;
+let switching = false;
+function animateSwitch(id) {
+const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (reduce || switching || !$('stack').contains($('activelist'))) {
+switchList(id); renderStack();
+return;
+}
+switching = true;
+const activeEl = $('activelist');
+const tapped = $('stack').querySelector('.tl[data-lid="' + id + '"]');
+const closedH = tapped ? tapped.getBoundingClientRect().height : 52;
+// Phase A: fold the open card shut; lift the tapped card out of the deck.
+activeEl.style.height = activeEl.getBoundingClientRect().height + 'px';
+activeEl.classList.add('tl-anim');
+if (tapped) tapped.classList.add('tl-armed');
+requestAnimationFrame(() => requestAnimationFrame(() => {
+activeEl.style.height = closedH + 'px';
+activeEl.classList.add('tl-folded');
+}));
+setTimeout(() => {
+// Phase B: switch data, rebuild the stack, unfold the new open card in place.
+activeEl.classList.remove('tl-anim', 'tl-folded');
+activeEl.style.height = '';
+switchList(id);
+renderStack();
+const grow = $('activelist');
+grow.style.height = closedH + 'px';
+grow.classList.add('tl-anim', 'tl-unfolding');
+requestAnimationFrame(() => requestAnimationFrame(() => {
+grow.style.height = grow.scrollHeight + 'px';
+grow.classList.remove('tl-unfolding');
+}));
+setTimeout(() => {
+grow.classList.remove('tl-anim');
+grow.style.height = '';
+switching = false;
+}, EASE_MS + 60);
+}, EASE_MS + 30);
 }
 function renderTitle() {
 const owner = ownerPk();
@@ -1599,7 +1690,7 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
 navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 input.focus();
-window.__TL = { listId, ME, tasks, actions, comments, taskState, addTask, act, relays, names,
+window.__TL = { get listId() { return listId; }, ME, tasks, actions, comments, taskState, addTask, act, relays, names, switchList,
 setProfileName, setListName, get myName() { return myName; }, get owner() { return ownerPk(); },
 nsec: () => C.nsecEncode(sk), npub: () => C.npubEncode(ME) };
 })();

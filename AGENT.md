@@ -126,7 +126,12 @@ pubkeys appear in the list; it is re-issued (debounced) on growth.
 - Bare URL → replaceState to the most recently opened tasklist that has cached events,
   or to a fresh `#listId` on a first visit. Never mint a new list on a bare URL when the
   device already has one — it shows up as an empty ghost card next to the real lists.
-  A new list is created only by an explicit "+ New tasklist". Hash change → full reload.
+  A new list is created only by an explicit "+ New tasklist". Hash change → in-page
+  switch (`switchList()`: reset per-list state, replay the new list's cache, re-REQ
+  the open relay sockets — same sub id replaces the subscription; never reload),
+  wrapped in the deck animation (`animateSwitch()`: the open card folds shut, the
+  tapped card lifts out of the deck, then unfolds — height transitions so the other
+  cards slide along; skipped under prefers-reduced-motion).
 - New-task input: always focused, Enter adds and keeps focus. Never steal its focus.
 - **The circle is the only thing that completes a task, and it works for anyone in one
   tap** — no claim required first. Tapping the row toggles the inline thread, where
