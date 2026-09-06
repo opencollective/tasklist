@@ -12,7 +12,11 @@ function memExec(cmds) {
     const op = String(c[0]).toUpperCase();
     const k = c[1];
     if (op === 'GET') return mem.get(k) ?? null;
-    if (op === 'SET') { mem.set(k, String(c[2])); return 'OK'; }
+    if (op === 'SET') {
+      const opts = c.slice(3).map((x) => String(x).toUpperCase());
+      if (opts.includes('NX') && mem.has(k)) return null;
+      mem.set(k, String(c[2])); return 'OK';
+    }
     if (op === 'DEL') { const had = mem.delete(k); return had ? 1 : 0; }
     if (op === 'SADD') { const s = mem.get(k) instanceof Set ? mem.get(k) : new Set(); const n = s.size; for (const v of c.slice(2)) s.add(String(v)); mem.set(k, s); return s.size - n; }
     if (op === 'SREM') { const s = mem.get(k); if (!(s instanceof Set)) return 0; let n = 0; for (const v of c.slice(2)) n += s.delete(String(v)) ? 1 : 0; return n; }

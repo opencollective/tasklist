@@ -58,8 +58,13 @@ function describe(fold, evt) {
 async function notifyChat(chatKey, link, fold, events) {
   const chatId = link.chatId ?? String(chatKey).split(':')[0];
   const cursor = parseInt(await kv('GET', 'cursor:' + chatKey), 10) || 0;
+  /* Eligibility: newer than the cursor (minus a clock-skew buffer, deduped by the
+     seen set) AND at most 24h old by wall clock. The hard horizon matters: the
+     cursor never advances past the last event, so without it the tail of activity
+     stays eligible forever and replays every time the 7-day seen set expires. */
+  const horizon = Math.floor(Date.now() / 1000) - 86400;
   const fresh = events
-    .filter((e) => e.created_at > cursor - 900) // clock-skew buffer; seen-set dedupes
+    .filter((e) => e.created_at > cursor - 900 && e.created_at > horizon)
     .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
   if (!fresh.length) return 0;
   const seenChecks = await kvPipeline(fresh.map((e) => ['SISMEMBER', 'seen:' + chatKey, e.id]));
@@ -118,21 +123,33 @@ export default async function handler(req, res) {
   if (process.env.CRON_SECRET && auth !== 'Bearer ' + process.env.CRON_SECRET) {
     res.status(401).send('unauthorized'); return;
   }
-  const chatKeys = await bot.allChats();
-  const links = await Promise.all(chatKeys.map(async (k) => ({ chatKey: k, link: await bot.chatLink(k) })));
-  const byList = new Map();
-  for (const { chatKey, link } of links) {
-    if (!link) continue;
-    if (!byList.has(link.listId)) byList.set(link.listId, []);
-    byList.get(link.listId).push({ chatKey, link });
+  // Overlap guard: two concurrent runs would each pass the seen-set check before
+  // the other's SADD lands and double-send. Skip instead.
+  if ((await kv('SET', 'cron-lock', '1', 'NX', 'EX', '55')) === null) {
+    res.status(200).json({ ok: true, skipped: 'previous run still in progress' }); return;
   }
   let total = 0;
-  for (const [listId, targets] of byList) {
-    let events;
-    try { events = await fetchEvents({ kinds: LIST_KINDS, '#t': [listId], limit: 500 }); }
-    catch (err) { console.error('fetch', listId, err.message); continue; }
-    const fold = foldList(listId, events);
-    for (const { chatKey, link } of targets) total += await notifyChat(chatKey, link, fold, events);
+  const byList = new Map();
+  try {
+    const chatKeys = await bot.allChats();
+    const links = await Promise.all(chatKeys.map(async (k) => ({ chatKey: k, link: await bot.chatLink(k) })));
+    for (const { chatKey, link } of links) {
+      if (!link) continue;
+      if (!byList.has(link.listId)) byList.set(link.listId, []);
+      byList.get(link.listId).push({ chatKey, link });
+    }
+    for (const [listId, targets] of byList) {
+      let events;
+      try { events = await fetchEvents({ kinds: LIST_KINDS, '#t': [listId], limit: 500 }); }
+      catch (err) { console.error('fetch', listId, err.message); continue; }
+      const fold = foldList(listId, events);
+      for (const { chatKey, link } of targets) {
+        try { total += await notifyChat(chatKey, link, fold, events); }
+        catch (err) { console.error('chat', chatKey, err.message); } // one bad chat must not abort the rest
+      }
+    }
+  } finally {
+    await kv('DEL', 'cron-lock').catch(() => {});
   }
-  res.status(200).json({ ok: true, chats: chatKeys.length, lists: byList.size, sent: total });
+  res.status(200).json({ ok: true, lists: byList.size, sent: total });
 }

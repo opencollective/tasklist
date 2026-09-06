@@ -174,7 +174,11 @@ sign and publish the same kinds listed above. Rules:
   Group-scoped lists are auto-named after the chat title.
 - KV state: `chat:{chatKey}` link `{listId, chatId, threadId}`, `chats` set,
   `cursor:{chatKey}` + `seen:{chatKey}` (notification dedupe; a scope's own
-  publishes are pre-seeded so it never gets its own actions echoed back),
+  publishes are pre-seeded so it never gets its own actions echoed back).
+  Dedup invariant: the seen set EXPIRES (7d), so eligibility must also be bounded
+  by wall clock (24h horizon in cron.mjs) — the cursor alone can't do it, it
+  stalls at the last event and would replay the tail after every expiry. The cron
+  also takes a `cron-lock` (SET NX) so overlapping runs can't double-send,
   `msg:{chatId}:{messageId}` → taskId (reply-to-comment and buttons;
   callback_data carries a 16-char event-id prefix, resolved against a fresh relay
   fetch), `byname:{chatKey}:{slug}` → listId (/tasklist name switching).
