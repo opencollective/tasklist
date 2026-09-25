@@ -89,6 +89,10 @@ box-shadow: var(--stack-shadow); overflow: hidden; position: relative;
 .tl.closed .tl-head { padding: 14px 16px; }
 .tl.closed:not(:last-child) .tl-head { padding-bottom: 32px; }
 .tl-head { display: flex; align-items: center; gap: 9px; padding: 12px 14px; cursor: pointer; user-select: none; min-width: 0; }
+.ppl { display: inline-flex; align-items: center; flex: none; }
+.ppl .avatar { width: 16px; height: 16px; border-radius: 50%; flex: none; border: 2px solid var(--card); margin-left: -6px; box-sizing: content-box; }
+.ppl .avatar:first-child { margin-left: 0; }
+.ppl .more { font-size: 11px; font-weight: 600; color: var(--muted); margin-left: 4px; }
 .tl-title {
 flex: 1; min-width: 0; font-weight: 750; font-size: 17px; letter-spacing: -.02em;
 white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -262,6 +266,7 @@ overflow-wrap: anywhere; margin-bottom: 14px; user-select: all;
 <span class="editable" id="titlename" title="Set your name">Anon</span><span id="possessive">'s</span>
 <span class="editable" id="listname" title="Rename this tasklist">tasklist</span>
 </div>
+<span id="activeppl"></span>
 <span class="todo-chip" id="todocount" hidden></span>
 <button class="iconbtn" id="sharebtn" title="Share this tasklist" aria-label="Share this tasklist"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>
 </div>
@@ -1451,12 +1456,14 @@ if (!name) return;
 const cur = nm.get(pk);
 if (!cur || at >= cur.at) nm.set(pk, { name: String(name).slice(0, 24), at });
 };
+const ppl = new Set();
 for (const e of evts) {
 if (!e || !e.id) continue;
 if (e.kind === KIND_PROFILE) {
 try { learn(e.pubkey, JSON.parse(e.content).name, e.created_at); } catch {}
 continue;
 }
+ppl.add(e.pubkey);
 const nt = (e.tags || []).find((t) => t[0] === 'name');
 if (nt) learn(e.pubkey, nt[1], e.created_at);
 if (!first || e.created_at < first.created_at || (e.created_at === first.created_at && e.id < first.id)) first = e;
@@ -1487,11 +1494,23 @@ if (!done) open++;
 }
 const op = first ? first.pubkey : null;
 const ownerName = !op || op === ME ? (myName || 'Anon') : ((nm.get(op) || {}).name || 'Anon');
-return { id, name: meta.name || 'tasklist', ownerName, open, total };
+const people = [...ppl].sort((a, b) => (a === op ? -1 : b === op ? 1 : 0));
+const personName = (pk) => pk === ME ? (myName || 'you') : ((nm.get(pk) || {}).name || 'Anon');
+return { id, name: meta.name || 'tasklist', ownerName, open, total, people, personName };
 }
 function todoChip(open, total) {
 if (!total) return '';
 return el('span', { class: 'todo-chip' + (open ? '' : ' zero') }, open ? open + ' to do' : 'all done ✓');
+}
+/* Overlapping avatar dots for a list's participants — only when there's more than
+   one, so a stack of similar cards is easy to tell apart by who's on each list. */
+function peopleRow(people, personName) {
+if (!people || people.length < 2) return '';
+const MAX = 5;
+const row = el('span', { class: 'ppl', title: 'With ' + people.map(personName).join(', ') });
+for (const pk of people.slice(0, MAX)) row.appendChild(avatar(pk));
+if (people.length > MAX) row.appendChild(el('span', { class: 'more' }, '+' + (people.length - MAX)));
+return row;
 }
 function removeList(id) {
 knownLists = knownLists.filter((l) => l.id !== id);
@@ -1521,6 +1540,7 @@ if (l.id === listId) return $('activelist');
 const s = summarizeList(l.id);
 const head = el('div', { class: 'tl-head', title: 'Open this tasklist', onclick: () => { location.hash = '#' + l.id; } },
 el('div', { class: 'tl-title' }, s.ownerName + "'s " + s.name),
+peopleRow(s.people, s.personName),
 todoChip(s.open, s.total),
 el('button', { class: 'del', title: 'Remove this tasklist from this device', onclick: (e) => {
 e.stopPropagation();
@@ -1538,7 +1558,7 @@ writeCache(); // flush the old list's cache now — the debounced timer would wr
 clearTimeout(cacheTimer);
 listId = id;
 if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
-seen.clear(); tasks.clear(); actions.clear(); comments.clear();
+seen.clear(); tasks.clear(); actions.clear(); comments.clear(); authors.clear();
 listMeta = { name: '', at: 0, evtId: '' };
 earliest = null;
 expandedId = null;
@@ -1637,6 +1657,12 @@ else {
 tc.hidden = false;
 tc.textContent = open.length ? open.length + ' to do' : 'all done ✓';
 tc.classList.toggle('zero', open.length === 0);
+}
+{
+const op = ownerPk();
+const people = [...authors].sort((a, b) => (a === op ? -1 : b === op ? 1 : 0));
+const row = peopleRow(people, (pk) => pk === ME ? (myName || 'you') : nameOf(pk));
+$('activeppl').replaceChildren(...(row ? [row] : []));
 }
 if (wasFocused) {
 const i = document.getElementById('cmt-input');
