@@ -1,7 +1,7 @@
 'use strict';
 // App-shell cache: serve the page instantly (and offline), refresh it in the
 // background. Relay/blossom traffic is cross-origin and passes straight through.
-const CACHE = 'tasklist-v1';
+const CACHE = 'tasklist-v2';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
 self.addEventListener('install', (e) => {
 e.waitUntil(caches.open(CACHE)

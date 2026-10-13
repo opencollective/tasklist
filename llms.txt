@@ -34,7 +34,7 @@ work without profile lookups). Standard nostr signing (NIP-01, secp256k1/Schnorr
 | kind  | meaning       | content            | extra tags |
 |-------|---------------|--------------------|------------|
 | 0     | profile       | JSON `{"name": "…"}` | standard nostr; no `t` tag |
-| 2100  | create task   | task title (plain text, ≤300 chars) | — (the task id IS the event id) |
+| 2100  | create task   | public title (≤300 chars), or `TLENC1:` encrypted title | — (the task id IS the event id) |
 | 2101  | task action   | empty              | `["e", "<taskId>"]`, `["action", "claim"\|"unclaim"\|"done"\|"undone"\|"delete"]` |
 | 2102  | list name     | list name (≤48 chars) | — (latest wins) |
 | 2103  | comment       | comment text (≤2000 chars) | `["e", "<taskId>"]`, optional `["attachment", "<url>", "<mime>", "<filename>"]` |
@@ -50,12 +50,61 @@ Example — mark it done:
      "tags": [["e", "<taskEventId>"], ["action", "done"],
               ["t", "a1b2c3d4e5f60718"], ["client", "my-agent"], ["name", "Milk Bot"]]}
 
+## Optional encrypted titles (TLENC1)
+
+Users can generate/download or import a per-list key under Settings → Title
+encryption. Receive the JSON key file through a private local file or secret
+store. Never put the key in a relay event, tag, comment, tasklist URL, or public
+message. The file is independent of the agent's Nostr signing identity:
+
+    {"format":"tasklist-private-key-v1","listId":"<listId>",
+     "keyId":"<16 lowercase hex chars>","key":"<43 base64url chars>"}
+
+`key` is 32 random bytes, base64url encoded without padding. `keyId` is the first
+eight bytes of SHA-256(key), lowercase hex. Validate the format, list ID, key
+length, and fingerprint before use. The browser stores this exact file under
+`tasklist.encryption-key.<listId>` in localStorage; it is never sent to relays.
+
+To publish an encrypted kind 2100 task:
+
+1. Construct the final `pubkey`, `created_at`, `kind`, and `tags` first. Include
+   exactly one `["t","<listId>"]` tag. Do not put private title text or URLs in tags.
+2. UTF-8 encode JSON `{"title":"<complete task title>"}` (maximum 8192 bytes).
+   Prefix it with its byte length as a four-byte big-endian unsigned integer and
+   zero-pad the combined buffer to a multiple of 256 bytes.
+3. Generate a fresh random 12-byte nonce for every event. Encrypt using
+   AES-256-GCM with a 128-bit tag and the downloaded key. Additional authenticated
+   data is UTF-8 JSON `["tasklist-private",1,pubkey,created_at,kind,tags]` using the
+   final event fields, in that order.
+4. Set content to `TLENC1:<keyId>:<nonceBase64url>:<ciphertextAndTagBase64url>`.
+   Both base64url fields omit padding. Hash/sign/publish the completed event by
+   NIP-01. Never modify its authenticated fields after encryption.
+
+To read, preserve the full content (do not apply the 300-character public-title
+cap). Validate the event hash/signature, list ID, envelope size (≤16000 chars),
+key ID, 12-byte nonce, and padded ciphertext shape before decrypting with the same
+AAD. Validate the payload length, zero padding, and nonempty string `title`.
+Wrong/missing keys and malformed events must remain locked. Do not persist
+decrypted title text in the signed-event cache or retransmit it as another event.
+
+This format is compatible with existing `tasklist-private-key-v1` agent clients
+and browser extensions; it is not NIP-44. Public titles, encrypted titles, and
+ordinary action events can coexist. Completion and assignment need no decryption
+key. Comments/attachments and all event metadata remain public. Old clients may
+display shortened ciphertext and can still post plaintext.
+
+If a list is known to use encryption, do not add public titles because a key is
+missing or decryption fails. Obtain the key privately first. Existing public
+titles cannot be made private retroactively; generating a key does not rewrite
+history. Local key removal is not key revocation.
+
 ## Folding events into state (the reducer rules)
 
 Sort all events by `(created_at, id)` ascending (ties break lexicographically by id),
 then fold:
 
-- kind 2100: creates a task; skip if the trimmed title is empty.
+- kind 2100: creates a task; skip if the trimmed public title is empty. Preserve
+  full `TLENC1:` content and show a locked placeholder without a valid key.
 - kind 2101 per task, in order: `claim` sets assignee to the event author (takeover
   allowed); `unclaim` clears assignee only if sent by the current assignee;
   `done`/`undone` toggle completion (anyone may complete — no claim required);
@@ -89,7 +138,8 @@ user acts under their own server-derived nostr keypair.
 
 - Set a stable `["client", "…"]` tag and a human-readable `["name", "…"]`.
 - Never mutate history — publish new events; state is append-only by design.
-- Lists are public to anyone who knows the id; don't post sensitive content.
+- Lists/events are public. Use encrypted titles for sensitive task text; comments,
+  attachments, names, activity, and all other metadata remain public.
 
 ## More
 

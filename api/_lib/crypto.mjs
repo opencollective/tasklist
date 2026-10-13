@@ -153,6 +153,35 @@ N
 );
 return concatBytes(bigTo32(Rpt.x), bigTo32(mod(k + e * d, N)));
 }
+async function schnorrVerify(sig, msg, pubkey) {
+try {
+if (sig.length !== 64 || pubkey.length !== 32) return false;
+const x = bytesToBig(pubkey), r = bytesToBig(sig.slice(0, 32)), s = bytesToBig(sig.slice(32));
+if (x >= P || r >= P || s >= N) return false;
+const c = mod(x * x * x + 7n, P);
+let y = modpow(c, (P + 1n) / 4n, P);
+if (mod(y * y, P) !== c) return false;
+if (y & 1n) y = P - y;
+const e = bytesToBig(await taggedHash('BIP0340/challenge', sig.slice(0, 32), pubkey, msg)) % N;
+let ep = IDENT;
+const base = { x, y, z: 1n }, k = mod(-e, N);
+for (let i = 255; i >= 0; i--) {
+ep = jDouble(ep);
+if ((k >> BigInt(i)) & 1n) ep = jAdd(ep, base);
+}
+const R = toAffine(jAdd(jMulG(s), ep));
+return !(R.y & 1n) && R.x === r;
+} catch { return false; }
+}
+async function verifyEvent(evt) {
+try {
+if (!/^[0-9a-f]{64}$/.test(evt.id) || !/^[0-9a-f]{64}$/.test(evt.pubkey) || !/^[0-9a-f]{128}$/.test(evt.sig) ||
+!Number.isSafeInteger(evt.created_at) || !Number.isInteger(evt.kind) || typeof evt.content !== 'string' ||
+!Array.isArray(evt.tags) || evt.tags.some(t => !Array.isArray(t) || t.some(v => typeof v !== 'string'))) return false;
+const id = await sha256(utf8(JSON.stringify([0, evt.pubkey, evt.created_at, evt.kind, evt.tags, evt.content])));
+return bytesToHex(id) === evt.id && await schnorrVerify(hexToBytes(evt.sig), id, hexToBytes(evt.pubkey));
+} catch { return false; }
+}
 const B32C = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 function b32polymod(values) {
 const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
@@ -210,6 +239,8 @@ root.NostrCrypto = {
 generateSecretKey,
 getPublicKey,
 schnorrSign,
+schnorrVerify,
+verifyEvent,
 finalizeEvent,
 sha256,
 taggedHash,

@@ -15,6 +15,7 @@ export function foldList(listId, events) {
   const tasks = new Map(), actions = new Map(), comments = new Map(), names = new Map();
   let listMeta = { name: '', at: 0, evtId: '' };
   let earliest = null;
+  let encryptedTitles = false;
   const learnName = (pk, name, at) => {
     name = String(name || '').slice(0, 40).trim();
     if (!name) return;
@@ -34,8 +35,11 @@ export function foldList(listId, events) {
         (evt.created_at === earliest.created_at && evt.id < earliest.id)) earliest = evt;
     learnName(evt.pubkey, tagVal(evt, 'name'), evt.created_at);
     if (evt.kind === KIND_TASK) {
-      const title = String(evt.content || '').slice(0, 300).trim();
-      if (title) tasks.set(evt.id, { id: evt.id, title, creator: evt.pubkey, createdAt: evt.created_at });
+      const encrypted = typeof evt.content === 'string' && evt.content.startsWith('TLENC1:');
+      if (encrypted && evt.content.length > 16000) continue;
+      if (encrypted) encryptedTitles = true;
+      const title = encrypted ? '🔒 Encrypted task (open the web app with its key)' : String(evt.content || '').slice(0, 300).trim();
+      if (title) tasks.set(evt.id, { id: evt.id, title, creator: evt.pubkey, createdAt: evt.created_at, encrypted });
     } else if (evt.kind === KIND_ACTION) {
       const taskId = tagVal(evt, 'e'), act = tagVal(evt, 'action');
       if (!taskId || !['claim', 'unclaim', 'done', 'undone', 'delete'].includes(act)) continue;
@@ -60,7 +64,7 @@ export function foldList(listId, events) {
       }
     }
   }
-  return { tasks, actions, comments, names, listMeta, owner: earliest ? earliest.pubkey : null };
+  return { tasks, actions, comments, names, listMeta, encryptedTitles, owner: earliest ? earliest.pubkey : null };
 }
 
 export function taskState(fold, t) {

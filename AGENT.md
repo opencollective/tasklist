@@ -61,14 +61,15 @@ tasklist/
 ├── llms.txt              ← agent-facing protocol summary, served at tasklist.sh/llms.txt
 ├── index.html            ← THE deliverable: markup, CSS, crypto (secp256k1, BIP-340
 │                           Schnorr, bech32 — window.NostrCrypto), QR encoder
-│                           (window.QR), and all app logic, in three <script> blocks
+│                           (window.QR), optional title encryption
+│                           (window.TaskEncryption), and app logic, in four <script> blocks
 ├── sw.js                 ← service worker: offline app-shell cache (PWA)
 ├── manifest.webmanifest  ← PWA manifest        icon-*.png ← app icons
 ├── vercel.json           ← cron schedule for the bot notifier
 └── api/                  ← Telegram bot (Vercel functions; see "The Telegram bot")
 ```
 
-There is no build step and no checked-in test suite: edit `index.html` directly and
+There is no build step: edit `index.html` directly and
 keep it self-contained. Verify changes by driving the app headlessly (Chromium
 `--headless=new --dump-dom` with an injected script that points `tasklist.relays`
 at a local/dead relay) and, for the bot, by invoking the handlers in `api/` with a
@@ -76,6 +77,10 @@ mock Telegram API and asserting the resulting events on the relays. If you touch
 the crypto or QR blocks, test against BIP-340 official vectors / a reference QR
 encoder — see "Everything is verified" above; history shows plausible-looking
 wrong output in both.
+
+`node --test tests/*.mjs` (Node 22+) runs the exact inline crypto and
+encryption code without npm dependencies, including the checked-in official
+BIP-340 vectors. Keep the downloaded vector fixture aligned with bitcoin/bips.
 
 Deploys: pushing to `main` on github.com/opencollective/tasklist auto-deploys to
 tasklist.sh (Vercel).
@@ -89,7 +94,7 @@ without a profile lookup). The list id is 16 hex chars from the URL fragment (`#
 | kind  | meaning        | content                | extra tags |
 |-------|----------------|------------------------|------------|
 | 0     | profile        | JSON `{name}`          | (standard nostr kind 0; no `t` tag) |
-| 2100  | create task    | task title (plain text)| — (task id = event id) |
+| 2100  | create task    | public title or `TLENC1:` encrypted title | — (task id = event id) |
 | 2101  | task action    | empty                  | `['e', taskId]`, `['action', claim\|unclaim\|done\|undone\|delete]` |
 | 2102  | list metadata  | list name              | — (latest wins) |
 | 2103  | comment        | comment text           | `['e', taskId]`, optional `['attachment', url, mime, filename]` |
@@ -109,6 +114,28 @@ Derived state rules (see `taskState()` — keep them in one place):
 Names resolve: own localStorage → kind 0 (latest) → per-event `name` tags → "Anon".
 Profiles are fetched via a second subscription (`tlp`) whose author list grows as new
 pubkeys appear in the list; it is re-issued (debounced) on growth.
+
+### Optional title encryption
+
+- `TaskEncryption` uses browser Web Crypto (AES-256-GCM) with a random per-list
+  key and fresh 12-byte nonce per event. Preserve the versioned TLENC1/key-file
+  format documented in llms.txt; it interoperates with existing agent clients.
+- Generate/import/download only on explicit user action. Store the key file
+  under `tasklist.encryption-key.<listId>` in localStorage; never in the URL,
+  relay tags, event cache, pending queue, or bot storage.
+- `tasklist.encrypted.<listId>` remembers that this device knows a list uses
+  encryption. Missing/corrupt keys fail closed for new titles; removing a key
+  must preserve the marker. Other clients can still post public titles.
+- Ciphertext is signed after encryption; additional authenticated data binds
+  pubkey, timestamp, kind, and final tags. Verify the event hash/signature before
+  decryption. Do not change fields or apply the public 300-character title cap
+  to ciphertext. Decrypted JSON is bounded at 8192 bytes, wire content at 16000
+  characters. Malformed/wrong-key tasks stay locked without breaking rendering.
+- Keep decrypted titles only in derived memory/DOM. Cache original signed events
+  for offline replay. Async decryptions must check current list, task object, and
+  saved key before applying results; cross-tab key changes refresh derived state.
+- Comments, attachments, names, and actions remain public. Explain this boundary
+  in key settings and the list's encryption note. Existing public tasks stay public.
 
 ### Relays and Blossom
 
@@ -231,6 +258,11 @@ Example: "add due dates".
   them back from the relays and folding.
 - Two users = two browser profiles / two Telegram user ids (separate keys). Assert
   cross-user propagation by polling, never fixed sleeps.
+- Encryption: test generation/download/import, browser/agent interoperability,
+  cross-tab changes, missing/corrupt keys, key removal, malformed events, long
+  Unicode titles, ciphertext-only caches/queues, and offline replay. Confirm
+  public task entry still requires no setup. The bot keeps encrypted titles
+  locked and refuses title creation after observing encrypted list history.
 - QR verification is two independent layers: (a) bit-for-bit equality against a
   reference encoder (Kazuhiko Arase's) for the same version/ECC across all 8 masks;
   (b) screenshot → decode round-trip (OpenCV's *encoder* is buggy — use cv2 only to
@@ -248,6 +280,7 @@ Example: "add due dates".
 - [ ] A stranger's malformed/hostile event cannot break rendering (validate + cap all fields)
 - [ ] No "nostr" wording in user-facing UI; no new prompts blocking first task entry
 - [ ] Old clients ignore your new events; new client tolerates lists created by old ones
-- [ ] Raw size still ≈ 60 KB; if you added > 5 KB, justify it
+- [ ] Raw size still ≈ 85 KB; if you added > 5 KB, justify it (title encryption
+      adds key management, wire-format validation, and signature verification)
 - [ ] Protocol changes reflected in `llms.txt` (the public agent-facing doc) and README
 - [ ] Headless screenshots reviewed after the change

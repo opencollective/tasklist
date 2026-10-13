@@ -73,6 +73,12 @@ async function switchToList(scope, listId, name) {
 async function cmdTask(scope, user, title) {
   if (!title) { await scope.send('Usage: /task buy milk'); return; }
   const link = await ensureLink(scope, user);
+  const fold = await loadFold(link.listId);
+  if (fold.encryptedTitles) {
+    await scope.send('🔒 This tasklist uses encrypted titles. Add tasks in the web app with its key:\n' + bot.listUrl(link.listId),
+      { link_preview_options: { is_disabled: true } });
+    return;
+  }
   const evt = await bot.addTask(user, scope.chatKey, link.listId, title);
   const base = '○ ' + esc(title.slice(0, 300));
   const m = await scope.send(base, { parse_mode: 'HTML', reply_markup: taskButtons(evt.id, {}) });

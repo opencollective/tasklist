@@ -110,6 +110,12 @@ font: inherit; font-size: 17px; padding: 10px 12px; min-width: 0;
 }
 #newtask::placeholder { color: var(--muted); }
 #addbtn { border-radius: 10px; padding: 8px 16px; font-size: 20px; line-height: 1; }
+.encryption-note { padding: 7px 14px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.encryption-note button { color: var(--accent); border: 0; background: none; cursor: pointer; font: inherit; text-decoration: underline; }
+.encryption-toggle { flex: none; align-self: flex-start; margin-top: 2px; padding: 3px; border: 0; background: none; cursor: pointer; font-size: 15px; }
+.title.ciphertext { font: 12px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; user-select: text; max-height: 160px; overflow: auto; }
+#encryptionfile { display: block; width: 100%; margin-top: 8px; }
+.encryption-actions { flex-wrap: wrap; }
 .list:empty { display: none; }
 .task {
 display: flex; align-items: center; gap: 12px;
@@ -449,6 +455,35 @@ N
 );
 return concatBytes(bigTo32(Rpt.x), bigTo32(mod(k + e * d, N)));
 }
+async function schnorrVerify(sig, msg, pubkey) {
+try {
+if (sig.length !== 64 || pubkey.length !== 32) return false;
+const x = bytesToBig(pubkey), r = bytesToBig(sig.slice(0, 32)), s = bytesToBig(sig.slice(32));
+if (x >= P || r >= P || s >= N) return false;
+const c = mod(x * x * x + 7n, P);
+let y = modpow(c, (P + 1n) / 4n, P);
+if (mod(y * y, P) !== c) return false;
+if (y & 1n) y = P - y;
+const e = bytesToBig(await taggedHash('BIP0340/challenge', sig.slice(0, 32), pubkey, msg)) % N;
+let ep = IDENT;
+const base = { x, y, z: 1n }, k = mod(-e, N);
+for (let i = 255; i >= 0; i--) {
+ep = jDouble(ep);
+if ((k >> BigInt(i)) & 1n) ep = jAdd(ep, base);
+}
+const R = toAffine(jAdd(jMulG(s), ep));
+return !(R.y & 1n) && R.x === r;
+} catch { return false; }
+}
+async function verifyEvent(evt) {
+try {
+if (!/^[0-9a-f]{64}$/.test(evt.id) || !/^[0-9a-f]{64}$/.test(evt.pubkey) || !/^[0-9a-f]{128}$/.test(evt.sig) ||
+!Number.isSafeInteger(evt.created_at) || !Number.isInteger(evt.kind) || typeof evt.content !== 'string' ||
+!Array.isArray(evt.tags) || evt.tags.some(t => !Array.isArray(t) || t.some(v => typeof v !== 'string'))) return false;
+const id = await sha256(utf8(JSON.stringify([0, evt.pubkey, evt.created_at, evt.kind, evt.tags, evt.content])));
+return bytesToHex(id) === evt.id && await schnorrVerify(hexToBytes(evt.sig), id, hexToBytes(evt.pubkey));
+} catch { return false; }
+}
 const B32C = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 function b32polymod(values) {
 const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
@@ -506,6 +541,8 @@ root.NostrCrypto = {
 generateSecretKey,
 getPublicKey,
 schnorrSign,
+schnorrVerify,
+verifyEvent,
 finalizeEvent,
 sha256,
 taggedHash,
@@ -757,9 +794,68 @@ root.QR = { makeQR, qrSvg };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
+/* Optional title encryption. The wire/key-file format is shared with agents;
+   keys and plaintext never enter relay events or the per-list event cache. */
+(function (root) {
+'use strict';
+const C = root.NostrCrypto, prefix = 'TLENC1:', format = 'tasklist-private-key-v1';
+const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
+const b64 = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function unb64(text) {
+if (typeof text !== 'string' || !/^[A-Za-z0-9_-]+$/.test(text)) throw new Error('Invalid key or encrypted title');
+const bytes = Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+if (b64(bytes) !== text) throw new Error('Invalid key or encrypted title');
+return bytes;
+}
+const keyId = async bytes => C.bytesToHex((await C.sha256(bytes)).slice(0, 8));
+async function validateKey(file, listId) {
+if (!file || file.format !== format || typeof file.listId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(file.listId) || file.listId !== listId ||
+typeof file.key !== 'string' || file.key.length !== 43) throw new Error('Choose the encryption key file for this tasklist');
+const bytes = unb64(file.key);
+if (bytes.length !== 32 || await keyId(bytes) !== file.keyId) throw new Error('Invalid encryption key or fingerprint');
+return { format, listId, keyId: file.keyId, key: file.key };
+}
+async function generateKey(listId) {
+const bytes = crypto.getRandomValues(new Uint8Array(32));
+return validateKey({ format, listId, keyId: await keyId(bytes), key: b64(bytes) }, listId);
+}
+const encrypted = evt => evt.kind === 2100 && typeof evt.content === 'string' && evt.content.startsWith(prefix);
+const context = evt => encoder.encode(JSON.stringify(['tasklist-private', 1, evt.pubkey, evt.created_at, evt.kind, evt.tags]));
+async function encrypt(title, file, evt) {
+const payload = encoder.encode(JSON.stringify({ title }));
+if (payload.length > 8192) throw new Error('Task title is too long to encrypt (8 KiB maximum)');
+const padded = new Uint8Array(Math.ceil((payload.length + 4) / 256) * 256);
+new DataView(padded.buffer).setUint32(0, payload.length);
+padded.set(payload, 4);
+const iv = crypto.getRandomValues(new Uint8Array(12));
+const key = await crypto.subtle.importKey('raw', unb64(file.key), 'AES-GCM', false, ['encrypt']);
+const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: context(evt), tagLength: 128 }, key, padded));
+return prefix + file.keyId + ':' + b64(iv) + ':' + b64(cipher);
+}
+async function decrypt(evt, file) {
+const listTags = Array.isArray(evt.tags) ? evt.tags.filter(t => Array.isArray(t) && t[0] === 't') : [];
+if (!encrypted(evt) || evt.content.length > 16000 || listTags.length !== 1 || listTags[0][1] !== file.listId ||
+!await C.verifyEvent(evt)) throw new Error('Unable to verify encrypted task');
+const parts = evt.content.split(':');
+if (parts.length !== 4 || parts[1] !== file.keyId) throw new Error('This task needs a different encryption key');
+const iv = unb64(parts[2]), cipher = unb64(parts[3]);
+if (iv.length !== 12 || cipher.length < 272 || (cipher.length - 16) % 256) throw new Error('Invalid encrypted title');
+const key = await crypto.subtle.importKey('raw', unb64(file.key), 'AES-GCM', false, ['decrypt']);
+const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: context(evt), tagLength: 128 }, key, cipher));
+const size = new DataView(plain.buffer).getUint32(0);
+if (size > 8192 || size > plain.length - 4 || plain.slice(4 + size).some(b => b !== 0)) throw new Error('Invalid encrypted title');
+const value = JSON.parse(decoder.decode(plain.slice(4, 4 + size)));
+if (typeof value.title !== 'string' || !value.title.trim()) throw new Error('Invalid encrypted title');
+return value.title;
+}
+root.TaskEncryption = { prefix, generateKey, validateKey, encrypted, encrypt, decrypt };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>
 (function () {
 'use strict';
 const C = window.NostrCrypto;
+const E = window.TaskEncryption;
 const KIND_PROFILE = 0;   // profile metadata; content = JSON {name}
 const KIND_TASK = 2100;   // task creation; content = title
 const KIND_ACTION = 2101; // claim / unclaim / done / undone / delete
@@ -780,6 +876,8 @@ blossom: 'tasklist.blossom',
 lists: 'tasklist.lists',
 cache: (id) => 'tasklist.cache.' + id,
 pending: (id) => 'tasklist.pending.' + id,
+encryptionKey: (id) => 'tasklist.encryption-key.' + id,
+encrypted: (id) => 'tasklist.encrypted.' + id,
 };
 const BLOSSOM = (localStorage.getItem(LS.blossom) || 'https://blossom.primal.net').replace(/\/$/, '');
 const MAX_UPLOAD = 10 * 1024 * 1024;
@@ -835,6 +933,44 @@ let expandedId = null;        // task with open thread
 const drafts = new Map();     // taskId -> comment draft text
 const pendingFiles = new Map();// taskId -> File waiting to be sent
 const uploading = new Set();  // taskIds with an in-flight upload
+const keyCache = new Map();
+const ciphertextViews = new Set();
+function needsEncryption(id = listId) {
+return localStorage.getItem(LS.encrypted(id)) === '1' || localStorage.getItem(LS.encryptionKey(id)) !== null ||
+(id === listId && [...tasks.values()].some(t => t.encrypted));
+}
+async function encryptionKey(id) {
+const raw = localStorage.getItem(LS.encryptionKey(id));
+if (raw === null) return null;
+let entry = keyCache.get(id);
+if (!entry || entry.raw !== raw) {
+entry = { raw, key: Promise.resolve().then(() => E.validateKey(JSON.parse(raw), id)) };
+keyCache.set(id, entry);
+}
+return entry.key;
+}
+async function decryptTitle(task) {
+const id = listId, raw = localStorage.getItem(LS.encryptionKey(id));
+task.title = 'Encrypted task'; task.decryptState = raw === null ? 'locked' : 'pending';
+try {
+const key = await encryptionKey(id);
+if (!key) return;
+const title = await E.decrypt(task.event, key);
+if (listId !== id || tasks.get(task.id) !== task || localStorage.getItem(LS.encryptionKey(id)) !== raw) return;
+task.title = title; task.decryptState = 'ready';
+} catch {
+if (listId !== id || tasks.get(task.id) !== task || localStorage.getItem(LS.encryptionKey(id)) !== raw) return;
+task.title = 'Unable to decrypt or verify this task'; task.decryptState = 'error';
+} finally { scheduleRender(); }
+}
+function refreshEncryption() {
+keyCache.delete(listId);
+for (const task of tasks.values()) if (task.encrypted) decryptTitle(task);
+scheduleRender();
+}
+window.addEventListener('storage', e => {
+if (e.key === LS.encryptionKey(listId) || e.key === LS.encrypted(listId) || e.key === null) refreshEncryption();
+});
 function loadJSON(key, fallback) {
 try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
 }
@@ -867,7 +1003,7 @@ function savePending() {
 try { localStorage.setItem(LS.pending(listId), JSON.stringify(pending)); } catch {}
 }
 function tagOf(evt, name) {
-return (evt.tags || []).find((t) => t[0] === name);
+return Array.isArray(evt.tags) ? evt.tags.find((t) => Array.isArray(t) && t[0] === name) : undefined;
 }
 function tagVal(evt, name) {
 const t = tagOf(evt, name);
@@ -906,8 +1042,18 @@ trackAuthor(evt.pubkey);
 trackEarliest(evt);
 learnName(evt.pubkey, tagVal(evt, 'name'), evt.created_at);
 if (evt.kind === KIND_TASK) {
-const title = String(evt.content || '').slice(0, 300).trim();
-if (title) tasks.set(evt.id, { id: evt.id, title, creator: evt.pubkey, createdAt: evt.created_at });
+const encrypted = E.encrypted(evt);
+if (encrypted && evt.content.length > 16000) return;
+const title = encrypted ? 'Encrypted task' : String(evt.content || '').slice(0, 300).trim();
+if (title) {
+const task = { id: evt.id, title, creator: evt.pubkey, createdAt: evt.created_at, encrypted };
+tasks.set(evt.id, task);
+if (encrypted) {
+try { localStorage.setItem(LS.encrypted(listId), '1'); } catch {}
+task.event = evt;
+decryptTitle(task);
+}
+}
 } else if (evt.kind === KIND_ACTION) {
 const taskId = tagVal(evt, 'e');
 const act = tagVal(evt, 'action');
@@ -1015,17 +1161,31 @@ lastCreatedAt = Math.max(t, lastCreatedAt + 1);
 return lastCreatedAt;
 }
 async function signAndSend(kind, tags, content, lid) {
+const taskList = lid || listId, taskKeyRaw = kind === KIND_TASK ? localStorage.getItem(LS.encryptionKey(taskList)) : null;
 const allTags = kind === KIND_PROFILE ? tags : tags.concat(
 [['t', lid || listId], ['client', 'tasklist']], myName ? [['name', myName]] : []);
-const evt = await C.finalizeEvent({ kind, created_at: now(), tags: allTags, content }, sk);
+const template = { pubkey: ME, kind, created_at: now(), tags: allTags, content };
+if (kind === KIND_TASK) {
+const id = lid || listId, raw = localStorage.getItem(LS.encryptionKey(id));
+const key = await encryptionKey(id);
+if (!key && needsEncryption(id)) throw new Error('Import this tasklist’s encryption key before adding tasks');
+if (key) template.content = await E.encrypt(content, key, template);
+if (raw !== localStorage.getItem(LS.encryptionKey(id))) throw new Error('Encryption key changed; try adding the task again');
+}
+const evt = await C.finalizeEvent(template, sk);
+if (kind === KIND_TASK && (taskList !== listId || taskKeyRaw !== localStorage.getItem(LS.encryptionKey(taskList)))) {
+throw new Error('Tasklist or encryption key changed; try adding the task again');
+}
 processEvent(evt, false);
 publish(evt);
 return evt;
 }
 async function addTask(title) {
-title = title.trim().slice(0, 300);
+const id = listId;
+title = title.trim();
+if (!needsEncryption(id)) title = title.slice(0, 300);
 if (!title) return;
-await signAndSend(KIND_TASK, [], title);
+return signAndSend(KIND_TASK, [], title, id);
 }
 async function act(taskId, action) {
 await signAndSend(KIND_ACTION, [['e', taskId], ['action', action]], '');
@@ -1198,6 +1358,7 @@ catch { prompt('Copy this link:', url); }
 openModal(
 el('h2', {}, 'Share “' + label + '”'),
 el('p', {}, 'Anyone with this link can add tasks, grab one, and check it off — live. It will show up as “' + ownerName + '’s ' + label + '” in their list of tasklists.'),
+needsEncryption() ? el('p', {}, 'Encrypted titles also need the key file. Share it privately and separately; this link does not include it.') : '',
 box,
 el('div', { class: 'urlline', id: 'shareurl' }, url),
 el('div', { class: 'modal-actions' }, ...buttons)
@@ -1220,6 +1381,9 @@ el('h2', {}, 'Settings'),
 el('p', { id: 'aboutme' }, 'You appear as ', el('b', {}, myName || 'Anon'), ' ',
 el('button', { class: 'btn subtle small', id: 'aboutrename', onclick: () => { closeModal(); askProfileName(); } }, 'Change name')),
 el('div', { class: 'menu' },
+el('button', { class: 'menuitem', id: 'menuencryption', onclick: openEncryptionModal },
+el('span', {}, 'Title encryption'),
+el('span', { class: 'sub' }, needsEncryption() ? 'On  ›' : 'Optional  ›')),
 el('button', { class: 'menuitem', id: 'menurelays', onclick: openRelaysModal },
 el('span', {}, 'Relays'),
 el('span', { class: 'sub' }, relayUrls.length + '  ›')),
@@ -1228,9 +1392,84 @@ el('span', {}, 'Identity'),
 el('span', { class: 'sub' }, '›'))),
 el('div', { class: 'sect' }, 'About'),
 el('p', {}, 'tasklist — instant shared task lists. Type tasks, share the link, and coordinate in real time: grab a task, discuss it, check it off. No accounts and no server of its own — everything is signed with a key created in this browser.'),
-el('p', {}, 'tasklist uses a decentralized network of public relays. Don’t share sensitive information unless you control the relays that you are using tasklist with.'),
+el('p', {}, 'tasklist uses a decentralized network of public relays. Optional title encryption hides new task titles; comments, attachments, names, and activity remain public.'),
 el('div', { class: 'modal-actions' },
 el('button', { class: 'btn', onclick: closeModal }, 'Close'))
+);
+}
+function downloadEncryptionKey(file) {
+const url = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2) + '\n'], { type: 'application/json' }));
+const link = el('a', { href: url, download: 'tasklist-key-' + file.listId + '.json' });
+document.body.appendChild(link); link.click(); link.remove();
+setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function storeEncryptionKey(file, id) {
+file = await E.validateKey(file, id);
+if (listId !== id) throw new Error('Tasklist changed; try again');
+const prior = localStorage.getItem(LS.encryptionKey(id));
+const existing = await encryptionKey(id);
+if (existing && existing.key !== file.key) throw new Error('This tasklist already has a different key on this device');
+if (listId !== id || localStorage.getItem(LS.encryptionKey(id)) !== prior) throw new Error('Tasklist or key changed; try again');
+localStorage.setItem(LS.encryptionKey(id), JSON.stringify(file));
+// The key itself also marks encryption as enabled if this second write fails.
+try { localStorage.setItem(LS.encrypted(id), '1'); } catch {}
+refreshEncryption();
+return file;
+}
+function openEncryptionModal() {
+const id = listId, hasKey = localStorage.getItem(LS.encryptionKey(id)) !== null;
+const knownEncrypted = needsEncryption(id);
+const feedback = el('p', { id: 'encryptionfeedback', role: 'status', 'aria-live': 'polite' });
+const input = el('input', { id: 'encryptionfile', type: 'file', accept: '.json,application/json', 'aria-label': 'Import encryption key file' });
+input.onchange = async () => {
+try {
+const file = input.files[0];
+if (!file || file.size > 4096) throw new Error('Choose a key file smaller than 4 KiB');
+await storeEncryptionKey(JSON.parse(await file.text()), id);
+openEncryptionModal(); toast('Key imported — titles decrypt automatically');
+} catch (error) { feedback.textContent = error.message; }
+};
+const buttons = [el('button', { class: 'btn subtle', onclick: openSettingsModal }, 'Back')];
+if (hasKey) {
+buttons.push(el('button', { class: 'btn', id: 'encryptiondownload', onclick: async () => {
+try {
+const key = await encryptionKey(id);
+if (listId !== id || !key) throw new Error('Tasklist changed; try again');
+downloadEncryptionKey(key);
+} catch (error) { feedback.textContent = error.message; }
+} }, 'Download key'));
+buttons.push(el('button', { class: 'btn subtle', id: 'encryptionforget', onclick: () => {
+if (listId !== id) return;
+if (!confirm('Remove this key from this device? Keep a backup file to read encrypted titles again. New titles will stay locked until you import it.')) return;
+// Keep the encryption marker: forgetting a key must never enable plaintext posting.
+try {
+localStorage.setItem(LS.encrypted(id), '1');
+localStorage.removeItem(LS.encryptionKey(id));
+refreshEncryption(); openEncryptionModal();
+} catch { feedback.textContent = 'Could not remove the key from this device'; }
+} }, 'Remove from this device'));
+} else if (!knownEncrypted) {
+const generate = el('button', { class: 'btn', id: 'encryptiongenerate', onclick: async () => {
+generate.disabled = true;
+try {
+if (needsEncryption(id)) throw new Error('This tasklist already uses encryption; import its key');
+const file = await E.generateKey(id);
+if (needsEncryption(id)) throw new Error('This tasklist now uses encryption; import its key');
+await storeEncryptionKey(file, id);
+downloadEncryptionKey(file); openEncryptionModal(); toast('New task titles will be encrypted');
+} catch (error) { feedback.textContent = error.message; generate.disabled = false; }
+} }, 'Generate & download key');
+buttons.push(generate);
+}
+openModal(
+el('h2', {}, 'Title encryption'),
+el('p', {}, hasKey ? 'New task titles are encrypted on this device and decrypted automatically for display.' : knownEncrypted ? 'This tasklist has encrypted titles. Import its key to read them and add new tasks.' : 'Optionally encrypt new task titles with a key generated entirely in this browser. Existing public tasks stay public.'),
+el('p', {}, 'The key stays in this browser’s local storage. Keep the downloaded file private and backed up; clearing site data removes the key.'),
+el('p', {}, 'Give the key file to your agent through a private local file or secret store. Share it separately with collaborators who should read titles. The tasklist link does not contain the key.'),
+el('p', {}, 'Comments, attachments, list names, identities, and completion activity remain public. Website scripts can read the saved key and displayed titles.'),
+el('label', { for: 'encryptionfile' }, 'Import a key for this tasklist'), input,
+feedback,
+el('div', { class: 'modal-actions encryption-actions' }, ...buttons)
 );
 }
 function openRelaysModal() {
@@ -1418,8 +1657,19 @@ const check = el('div', { class: 'check', title: st.done ? 'Mark as not done' : 
 e.stopPropagation();
 circleTap(t);
 } }, st.done ? '✓' : '');
-const title = el('div', { class: 'title' }, linkify(t.title));
-row.append(check, title);
+const raw = t.encrypted && ciphertextViews.has(t.id);
+const title = el('div', { class: 'title' + (raw ? ' ciphertext' : '') }, raw ? t.event.content : linkify(t.title));
+row.append(check);
+if (t.encrypted) {
+const label = raw ? 'Show task title' : 'Show encrypted title';
+row.append(el('button', { class: 'encryption-toggle', title: label + ' — stored encrypted', 'aria-label': label,
+'aria-pressed': String(raw), onclick: e => {
+e.stopPropagation();
+if (ciphertextViews.has(t.id)) ciphertextViews.delete(t.id); else ciphertextViews.add(t.id);
+scheduleRender();
+} }, !raw && t.decryptState === 'ready' ? '🔓' : '🔒'));
+}
+row.append(title);
 const nComments = (comments.get(t.id) || []).length;
 if (nComments) row.appendChild(el('span', { class: 'chip', title: 'comments' }, '💬 ' + nComments));
 const who = st.done ? (st.doneBy || st.assignee) : st.assignee;
@@ -1635,6 +1885,7 @@ document.title = tn.textContent + "'s " + $('listname').textContent + ' — task
 }
 function render() {
 renderTitle();
+renderEncryptionNote();
 const open = [], done = [];
 for (const t of tasks.values()) {
 const st = taskState(t);
@@ -1672,11 +1923,26 @@ const ci = document.getElementById('cmt-input');
 if (ci) autosize(ci);
 }
 const input = $('newtask');
-function submitNew() {
+let addingTask = false;
+function renderEncryptionNote() {
+let note = $('encryptionnote');
+if (!needsEncryption()) { if (note) note.remove(); return; }
+if (!note) { note = el('div', { class: 'encryption-note', id: 'encryptionnote' }); $('activebody').prepend(note); }
+const hasKey = localStorage.getItem(LS.encryptionKey(listId)) !== null;
+note.replaceChildren(hasKey ? '🔒 New titles encrypted · comments and attachments public. ' : '🔒 Encrypted tasklist · import its key before adding tasks. ',
+el('button', { onclick: openEncryptionModal }, hasKey ? 'Manage key' : 'Import key'));
+}
+async function submitNew() {
+if (addingTask) return;
 const v = input.value;
-input.value = '';
-if (v.trim()) addTask(v);
-input.focus();
+if (!v.trim()) return;
+const id = listId;
+addingTask = true; $('addbtn').disabled = true;
+try {
+await addTask(v);
+if (listId === id && input.value === v) input.value = '';
+} catch (error) { toast(error.message || 'Could not add task — please try again'); }
+finally { addingTask = false; $('addbtn').disabled = false; if (listId === id) input.focus(); }
 }
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitNew(); } });
 $('addbtn').onclick = submitNew;
